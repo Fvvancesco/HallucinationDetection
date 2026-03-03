@@ -6,8 +6,8 @@ from typing import Union, Any
 from accelerate import PartialState
 from transformers import AutoTokenizer
 from transformers import BitsAndBytesConfig
-from src.model.LlaMa import LlamaForCausalLM
-from src.model.InspectOutputContext import InspectOutputContext
+from model.LlaMa import LlamaForCausalLM
+from model.InspectOutputContext import InspectOutputContext
 
 
 

@@ -1,6 +1,6 @@
 import os
 import argparse
-from src.model.HallucinationDetection import HallucinationDetection
+from model.HallucinationDetection import HallucinationDetection
 
 
 PROJECT_ROOT = os.getcwd()

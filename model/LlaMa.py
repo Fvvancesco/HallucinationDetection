@@ -46,8 +46,23 @@ from transformers.modeling_rope_utils import ROPE_INIT_FUNCTIONS, dynamic_rope_u
 from transformers.modeling_utils import ALL_ATTENTION_FUNCTIONS, PreTrainedModel
 from transformers.processing_utils import Unpack
 from transformers.pytorch_utils import ALL_LAYERNORM_LAYERS
+
+# --- COMPATIBILITY SHIM ---
+# Replaces: from transformers.loss.loss_utils import LossKwargs
+import typing
+if not hasattr(typing, "TypedDict"):
+    from typing_extensions import TypedDict
+
+class LossKwargs(typing.TypedDict, total=False):
+    """Shim for missing LossKwargs"""
+    pass
+
+class FlashAttentionKwargs(typing.TypedDict, total=False):
+    """Shim for missing FlashAttentionKwargs"""
+    pass
+# --------------------------
+
 from transformers.utils import (
-    LossKwargs,
     add_code_sample_docstrings,
     add_start_docstrings,
     add_start_docstrings_to_model_forward,
@@ -56,6 +71,7 @@ from transformers.utils import (
     logging,
     replace_return_docstrings,
 )
+
 from transformers.utils.deprecation import deprecate_kwarg
 from transformers.models.llama.configuration_llama import LlamaConfig
 
