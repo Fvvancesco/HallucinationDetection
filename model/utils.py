@@ -43,11 +43,11 @@ def get_weight_dir(
     weight_dir = model_path / "snapshots" / snapshot_hash
     assert weight_dir.is_dir(), f"Weight directory {weight_dir} does not exist or is not a directory."
 
-    if repo_type == "datasets":
+    if repo_type == "logical_datasets":
         if subset is not None:
             weight_dir = weight_dir / subset
         else:
-            # For datasets, we need to return the directory containing the dataset files
+            # For logical_datasets, we need to return the directory containing the dataset files
             weight_dir = weight_dir / "data"
     
     return weight_dir
@@ -99,10 +99,10 @@ def load_llm(model_name, bnb_config, local=False, dtype=torch.bfloat16, use_devi
 
 def load_tokenizer(model_name, local=False):
     if not local:
-        tokenizer = AutoTokenizer.from_pretrained(model_name, token=True)
+        tokenizer = AutoTokenizer.from_pretrained(model_name, token=False) #True
     else:
         model_local_path = get_weight_dir(model_name)
-        tokenizer = AutoTokenizer.from_pretrained(model_local_path, local_files_only=True, token=True)
+        tokenizer = AutoTokenizer.from_pretrained(model_local_path, local_files_only=True, token=False) #token=True
     tokenizer.pad_token = tokenizer.eos_token
 
     return tokenizer

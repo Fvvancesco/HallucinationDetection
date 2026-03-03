@@ -124,11 +124,28 @@ class LlamaRotaryEmbedding(nn.Module):
             self.rope_type = "default"
         self.max_seq_len_cached = config.max_position_embeddings
         self.original_max_seq_len = config.max_position_embeddings
-
+        """
         self.config = config
         self.rope_init_fn = ROPE_INIT_FUNCTIONS[self.rope_type]
 
         inv_freq, self.attention_scaling = self.rope_init_fn(self.config, device)
+        self.register_buffer("inv_freq", inv_freq, persistent=False)
+        self.original_inv_freq = self.inv_freq"""
+
+        self.config = config
+
+        # --- FIX per compatibilità con le nuove versioni di transformers ---
+        if self.rope_type in ROPE_INIT_FUNCTIONS:
+            self.rope_init_fn = ROPE_INIT_FUNCTIONS[self.rope_type]
+            inv_freq, self.attention_scaling = self.rope_init_fn(self.config, device)
+        else:
+            # Calcolo manuale di fallback se "default" non esiste
+            dim = getattr(config, "head_dim", config.hidden_size // config.num_attention_heads)
+            base = getattr(config, "rope_theta", 10000.0)
+            inv_freq = 1.0 / (base ** (torch.arange(0, dim, 2).float().to(device) / dim))
+            self.attention_scaling = 1.0
+        # -----------------------------------------------------------------
+
         self.register_buffer("inv_freq", inv_freq, persistent=False)
         self.original_inv_freq = self.inv_freq
 
