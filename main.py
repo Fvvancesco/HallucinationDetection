@@ -9,11 +9,11 @@ def main():
     # 1. Configurazione Iniziale
     # Puntiamo direttamente alla cartella logical_datasets
     BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-    PROJECT_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "datasets"))
+    PROJECT_DIR = os.path.join(BASE_DIR, "logical_datasets")
 
     LLM_NAME = "TinyLlama/TinyLlama-1.1B-Chat-v1.0"
 
-    detector = HallucinationDetection(project_dir=BASE_DIR)  # Passiamo la root al detector
+    detector = HallucinationDetection(project_dir=PROJECT_DIR) # Passiamo la root al detector
     print("🚀 Inizio pipeline di test Hallucination Detection")
 
     # Impostiamo il percorso corretto per i file del dataset

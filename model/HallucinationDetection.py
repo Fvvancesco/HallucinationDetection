@@ -3,7 +3,7 @@ import json
 import torch
 import pandas as pd
 from tqdm import tqdm
-from wandb.sdk.lib.wbauth import prompt
+#from wandb.sdk.lib.wbauth import prompt
 
 import model.utils as ut
 # from model.KCProbing import KCProbing
@@ -18,11 +18,13 @@ from prober.KCProbing import KCProbing
 # from sklearn.metrics import auc
 # from sklearn.metrics import roc_auc_score, precision_recall_curve
 
+prompt = "Answer with only one word, is the following statement true: {fact}?\nAnswer:"
+
 class HallucinationDetection:
     # -------------
     # Constants
     # -------------
-    TARGET_LAYERS = list(range(0, 32))  # Upper bound excluded
+    TARGET_LAYERS = list(range(0, 22))  # Upper bound excluded
     MAX_NEW_TOKENS = 100
     DEFAULT_DATASET = "beliefbank"
     CACHE_DIR_NAME = "activation_cache"
