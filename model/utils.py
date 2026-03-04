@@ -9,11 +9,7 @@ from transformers import BitsAndBytesConfig
 from model.LlaMa import LlamaForCausalLM
 from model.InspectOutputContext import InspectOutputContext
 
-
-
 HF_DEFAULT_HOME = os.environ.get("HF_HOME", "~/.cache/huggingface/hub")
-
-
 
 def get_weight_dir(
     model_ref: str,
@@ -99,7 +95,7 @@ def load_llm(model_name, bnb_config, local=False, dtype=torch.bfloat16, use_devi
 
 def load_tokenizer(model_name, local=False):
     if not local:
-        tokenizer = AutoTokenizer.from_pretrained(model_name, token=False) #True
+        tokenizer = AutoTokenizer.from_pretrained(model_name, token=True) #True
     else:
         model_local_path = get_weight_dir(model_name)
         tokenizer = AutoTokenizer.from_pretrained(model_local_path, local_files_only=True, token=False) #token=True

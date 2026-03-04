@@ -18,13 +18,13 @@ from prober.KCProbing import KCProbing
 # from sklearn.metrics import auc
 # from sklearn.metrics import roc_auc_score, precision_recall_curve
 
-prompt = "Answer with only one word, is the following statement true: {fact}?\nAnswer:"
-
+prompt = "Answer with ONLY with TRUE if the statement is true. FALSE if the statement is false: Is the following statement true: {fact}?"
+#You are an assistant for a survey that needs to be automatically tested so please a
 class HallucinationDetection:
     # -------------
     # Constants
     # -------------
-    TARGET_LAYERS = list(range(0, 22))  # Upper bound excluded
+    TARGET_LAYERS = list(range(0, 32))  # Upper bound excluded 22,  32 per llama grande
     MAX_NEW_TOKENS = 100
     DEFAULT_DATASET = "beliefbank"
     CACHE_DIR_NAME = "activation_cache"
@@ -228,6 +228,87 @@ class HallucinationDetection:
 
         self.combine_activations()
 
+    def save_attributions_and_grads(self):
+        """
+        Calcola la Feature Attribution moltiplicando Attivazione x Gradiente.
+        """
+        print("--" * 50)
+        print("Hallucination Detection - Saving Attributions (Act x Grad)")
+        print("--" * 50)
+
+        # Assicuriamoci che i gradienti siano attivi, ma non alleniamo i pesi del modello
+        torch.set_grad_enabled(True)
+        self.llm.eval()
+        for param in self.llm.parameters():
+            param.requires_grad = False
+
+        module_names = []
+        module_names += [f'model.layers.{idx}' for idx in self.TARGET_LAYERS]
+        module_names += [f'model.layers.{idx}.self_attn' for idx in self.TARGET_LAYERS]
+        module_names += [f'model.layers.{idx}.mlp' for idx in self.TARGET_LAYERS]
+
+        # Creiamo le cartelle per salvare le attribuzioni
+        attr_hidden_dir = os.path.join(self.project_dir, self.CACHE_DIR_NAME, "attributions_hidden")
+        attr_mlp_dir = os.path.join(self.project_dir, self.CACHE_DIR_NAME, "attributions_mlp")
+        attr_attn_dir = os.path.join(self.project_dir, self.CACHE_DIR_NAME, "attributions_attn")
+        for d in [attr_hidden_dir, attr_mlp_dir, attr_attn_dir]:
+            os.makedirs(d, exist_ok=True)
+
+        for idx in tqdm(range(len(self.dataset)), desc="Computing attributions"):
+            fact, fact_label, instance_id = self.dataset[idx]
+
+            model_input = prompt.format(fact=fact)
+            tokens = self.tokenizer(model_input, return_tensors="pt")
+
+            # Identifichiamo i token target per la nostra metrica
+            # Es: vogliamo sapere cosa spinge il modello a dire " TRUE" piuttosto che " FALSE"
+            pos_token = self.tokenizer.encode(" TRUE", add_special_tokens=False)[-1]
+            neg_token = self.tokenizer.encode(" FALSE", add_special_tokens=False)[-1]
+
+            # Iniziamo la context manager abilitando il tracciamento dei gradienti
+            with InspectOutputContext(self.llm, module_names, track_grads=True) as inspect:
+
+                # 1. FORWARD PASS
+                outputs = self.llm(
+                    input_ids=tokens["input_ids"].to("cuda"),
+                    attention_mask=tokens.get("attention_mask", None)
+                )
+
+                # 2. DEFINIZIONE DELLA METRICA
+                # Differenza logit tra TRUE e FALSE per l'ultimo token elaborato
+                logits = outputs.logits
+                last_token_logits = logits[0, -1, :]
+                metric = last_token_logits[pos_token] - last_token_logits[neg_token]
+
+                # 3. BACKWARD PASS
+                self.llm.zero_grad()
+                metric.backward()
+
+            # 4. CALCOLO E SALVATAGGIO DELL'ATTRIBUZIONE (Act * Grad)
+            for module, tensor in inspect.catcher.items():
+                if tensor.grad is None:
+                    continue
+
+                # Prendiamo solo l'attivazione e il gradiente dell'ultimo token
+                act_last = tensor[0, -1].detach().float()
+                grad_last = tensor.grad[0, -1].detach().float()
+
+                # La formula magica!
+                attribution = act_last * grad_last
+
+                # Salvataggio su disco come per le attivazioni
+                layer_idx = int(module.split(".")[2])
+                save_name = f"layer{layer_idx}-id{instance_id}.pt"
+
+                if "mlp" in module:
+                    save_path = os.path.join(attr_mlp_dir, save_name)
+                elif "self_attn" in module:
+                    save_path = os.path.join(attr_attn_dir, save_name)
+                else:
+                    save_path = os.path.join(attr_hidden_dir, save_name)
+
+                torch.save(attribution.cpu(), save_path)
+
     def combine_activations(self):
         results_dir = os.path.join(self.project_dir, self.CACHE_DIR_NAME)
         model_name = self.llm_name.split("/")[-1]
@@ -342,63 +423,3 @@ class HallucinationDetection:
         json.dump(metrics, open(metrics_path, "w"), indent=4)
 
         print(f"\t -> Metrics saved to {metrics_path}")
-
-
-import os
-import torch
-
-# Assicurati che l'import corrisponda alla struttura delle tue cartelle
-from model.HallucinationDetection import HallucinationDetection
-
-
-def main():
-    # 1. Configurazione Iniziale
-    # Imposta la root del progetto alla cartella in cui si trova main.py
-    PROJECT_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "logical_datasets"))
-
-    # Inserisci qui il nome del modello HuggingFace (o il percorso locale) che vuoi testare
-    # Esempi: "meta-llama/Llama-2-7b-hf", "mistralai/Mistral-7B-v0.1", o un modello più piccolo
-    LLM_NAME = "TinyLlama/TinyLlama-1.1B-Chat-v1.0"
-
-    # 2. Inizializzazione della classe
-    detector = HallucinationDetection(project_dir=PROJECT_DIR)
-    print("🚀 Inizio pipeline di test Hallucination Detection")
-
-    # 3. Caricamento Dataset
-    # Impostiamo label=1 (che nel nostro nuovo setup significa fatti veri, "yes")
-    detector.load_dataset(dataset_name="beliefbank", label=1)
-
-    # ---------------------------------------------------------
-    # TRUCCO PER IL TEST: Limitiamo a 10 prompt
-    # Usiamo la funzione che hai scritto tu stesso nel Dataset!
-    # ---------------------------------------------------------
-    detector.dataset.get_sample(max_samples=10)
-    print(f"\n📊 Dataset limitato a {len(detector.dataset)} elementi per il test rapido.\n")
-
-    # 4. Caricamento Modello Linguistico
-    # (Imposta use_device_map=True per usare la GPU automaticamente)
-    detector.load_llm(
-        llm_name=LLM_NAME,
-        use_local=False,
-        dtype=torch.float16,  # Usa float16 o bfloat16 a seconda della tua GPU
-        use_device_map=True
-    )
-
-    # 5. Creazione delle cartelle di output
-    # Questo creerà 'activation_cache/nome_modello/beliefbank/...'
-    detector._create_folders_if_not_exists(label=1)
-
-    # 6. Estrazione e Salvataggio Attivazioni
-    print("\n🧠 Inizio generazione e salvataggio attivazioni...")
-    detector.save_activations()
-
-    print("\n✅ Test completato con successo!")
-    print(f"Controlla la cartella '{detector.CACHE_DIR_NAME}' per vedere i tensori salvati.")
-
-
-if __name__ == '__main__':
-    # Disabilita eventuali warning noiosi sui symlink di HuggingFace (opzionale)
-    os.environ["HF_HUB_DISABLE_SYMLINKS_WARNING"] = "1"
-    print(torch.cuda.is_available())
-
-    main()
