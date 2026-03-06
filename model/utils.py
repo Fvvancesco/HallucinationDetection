@@ -95,7 +95,7 @@ def load_llm(model_name, bnb_config, local=False, dtype=torch.bfloat16, use_devi
 
 def load_tokenizer(model_name, local=False):
     if not local:
-        tokenizer = AutoTokenizer.from_pretrained(model_name, token=True) #True
+        tokenizer = AutoTokenizer.from_pretrained(model_name, token=True) #True per accedere con il token, false altrimenti
     else:
         model_local_path = get_weight_dir(model_name)
         tokenizer = AutoTokenizer.from_pretrained(model_local_path, local_files_only=True, token=False) #token=True
