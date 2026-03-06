@@ -89,9 +89,9 @@ class BeliefBankDataset(Dataset):
         set di Addestramento (train), Validazione (val) e Test.
         """
         # Costruisce i percorsi assoluti dei file
-        constraints_path = os.path.join(project_root, "data", "beliefbank", "constraints_v2.json")
-        calibration_facts_path = os.path.join(project_root, "data", "beliefbank", "calibration_facts.json")
-        silver_facts_path = os.path.join(project_root, "data", "beliefbank", "silver_facts.json")
+        constraints_path = os.path.join(project_root, "logical_datasets", "data", "beliefbank", "constraints_v2.json")
+        calibration_facts_path = os.path.join(project_root, "logical_datasets", "data", "beliefbank", "calibration_facts.json")
+        silver_facts_path = os.path.join(project_root, "logical_datasets", "data", "beliefbank", "silver_facts.json")
 
         # Inizializza le classi di supporto per gestire i file JSON
         constraints = Constraints(project_root=project_root, constraints_path=constraints_path)
@@ -268,8 +268,8 @@ class Constraints(Dataset):
         for fact in facts: hash_facts.setdefault(fact["predicate"], dict())[fact["subject"]] = fact
 
         templates, uncountables = Facts.get_language_templates(
-            templates_path=os.path.join(self.project_root, "data", "beliefbank", "templates.json"),
-            uncountables_path=os.path.join(self.project_root, "data", "beliefbank", "non_countable.txt"))
+            templates_path=os.path.join(self.project_root,"logical_datasets", "data", "beliefbank", "templates.json"),
+            uncountables_path=os.path.join(self.project_root,"logical_datasets", "data", "beliefbank", "non_countable.txt"))
 
         general_constraints = Constraints.get_links(path)
         samples = []
@@ -342,8 +342,8 @@ class Facts():
     def get_whole_set(self) -> dict:
         """ Estrae tutti i fatti (soggetto, predicato) e genera sia la frase vera che quella negata. """
         templates, uncountables = Facts.get_language_templates(
-            templates_path=os.path.join(self.project_root, "data", "beliefbank", "templates.json"),
-            uncountables_path=os.path.join(self.project_root, "data", "beliefbank", "non_countable.txt"))
+            templates_path=os.path.join(self.project_root, "logical_datasets","data", "beliefbank", "templates.json"),
+            uncountables_path=os.path.join(self.project_root, "logical_datasets","data", "beliefbank", "non_countable.txt"))
         with open(self.facts_path) as f:
             facts = json.load(f)
             samples = []
@@ -370,8 +370,8 @@ class Facts():
         """
 
         templates, uncountables = Facts.get_language_templates(
-            templates_path=os.path.join(self.project_root, "data", "beliefbank", "templates.json"),
-            uncountables_path=os.path.join(self.project_root, "data", "beliefbank", "non_countable.txt")
+            templates_path=os.path.join(self.project_root,"logical_datasets", "data", "beliefbank", "templates.json"),
+            uncountables_path=os.path.join(self.project_root, "logical_datasets","data", "beliefbank", "non_countable.txt")
         )
 
         with open(self.facts_path) as f:

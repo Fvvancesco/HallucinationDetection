@@ -13,7 +13,7 @@ from prober.KCProbing import KCProbing
 # Prompts Globali
 # -------------
 SYSTEM_PROMPT = "You are a helpful assistant. Answer truthfully with only one word: TRUE or FALSE."
-USER_PROMPT_TEMPLATE = "Is the following statement true: {fact}?"
+USER_PROMPT_TEMPLATE = "Is the following statement true: {fact}"
 
 
 class HallucinationDetection:
@@ -129,7 +129,7 @@ class HallucinationDetection:
 
     def eval(self, target, llm_name, data_name=DEFAULT_DATASET):
         result_path = os.path.join(self.project_dir, self.PREDICTION_DIR, llm_name)
-        preds_path = os.path.join(result_path, data_name, target, elf.PREDICTIONS_FILE_NAME.format(layer=self.kc_layer))
+        preds_path = os.path.join(result_path, data_name, target, self.PREDICTIONS_FILE_NAME.format(layer=self.kc_layer))
 
         if not os.path.exists(preds_path):
             raise FileNotFoundError(f"Predictions file not found: {preds_path}")
@@ -143,20 +143,39 @@ class HallucinationDetection:
     # -------------
     def save_activations(self, use_chat_template=True):
         module_names = self._get_target_modules()
+        system_prompt = "You are a helpful assistant. Answer truthfully with only one word: TRUE or FALSE."
 
         for idx in tqdm(range(len(self.dataset)), desc="Saving activations"):
             fact, fact_label, instance_id = self.dataset[idx]
 
-            formatted_prompt, tokens = self._prepare_inputs(fact, use_chat_template)
-            attention_mask = tokens.get("attention_mask")
+            # 1. Rimosso il punto interrogativo per evitare "bird.?"
+            user_prompt = f"Is the following statement true: {fact}"
+
+            # 2. Ripristinata la tua identica logica di formattazione
+            messages = ut.build_messages(
+                system_prompt=system_prompt,
+                user_prompt=user_prompt,
+                k=0
+            )
+
+            formatted_prompt = self.tokenizer.apply_chat_template(
+                messages,
+                tokenize=False,
+                add_generation_prompt=True
+            )
+
+            # 3. Ripristinato il caricamento esatto del vecchio codice (prima su CPU, poi CUDA)
+            tokens = self.tokenizer(formatted_prompt, return_tensors="pt")
+            attention_mask = tokens["attention_mask"].to("cuda") if "attention_mask" in tokens else None
 
             with InspectOutputContext(self.llm, module_names, save_generation=True,
                                       save_dir=self.generation_save_dir) as inspect:
                 output = self.llm.generate(
-                    input_ids=tokens["input_ids"],
-                    max_new_tokens=self.MAX_NEW_TOKENS,
+                    input_ids=tokens["input_ids"].to("cuda"), # Spostato su CUDA qui come facevi prima
+                    max_new_tokens=5,
                     attention_mask=attention_mask,
                     do_sample=False,
+                    top_p=None,
                     temperature=0.,
                     pad_token_id=self.tokenizer.eos_token_id,
                     return_dict_in_generate=True,
@@ -172,7 +191,82 @@ class HallucinationDetection:
                     logits = torch.stack(output.scores, dim=1)
                     ut.save_model_logits(logits, instance_id, self.logits_save_dir)
 
+            # Il salvataggio dei tensori resta gestito dalla classe per pulizia (include il detach)
             self._save_tensors_to_disk(inspect.catcher, instance_id, is_attribution=False)
+
+        self.combine_activations()
+
+    def save_activations_new_prompt(self):
+        module_names = []
+        module_names += [f'model.layers.{idx}' for idx in self.TARGET_LAYERS]
+        module_names += [f'model.layers.{idx}.self_attn' for idx in self.TARGET_LAYERS]
+        module_names += [f'model.layers.{idx}.mlp' for idx in self.TARGET_LAYERS]
+
+        # 1. Definisci il System Prompt (fuori dal loop per pulizia)
+        system_prompt = "You are a helpful assistant. Answer truthfully with only one word: TRUE or FALSE."
+
+        for idx in tqdm(range(len(self.dataset)), desc="Saving activations"):
+            fact, fact_label, instance_id = self.dataset[idx]
+
+            # 2. Formatta il prompt dell'utente come facevi prima
+            user_prompt = (f"Is the following statement true: {fact}").format(fact=fact)
+
+            # 3. Costruisci i messaggi usando la tua funzione
+            messages = ut.build_messages(
+                system_prompt=system_prompt,
+                user_prompt=user_prompt,
+                k=0
+            )
+
+            # 4. Applica il chat template del modello Instruct
+            formatted_prompt = self.tokenizer.apply_chat_template(
+                messages,
+                tokenize=False,
+                add_generation_prompt=True
+            )
+
+            # 5. Tokenizza il prompt formattato anziché il testo semplice
+            tokens = self.tokenizer(formatted_prompt, return_tensors="pt")
+            attention_mask = tokens["attention_mask"].to("cuda") if "attention_mask" in tokens else None
+
+            with InspectOutputContext(self.llm, module_names, save_generation=True,
+                                      save_dir=self.generation_save_dir) as inspect:
+                output = self.llm.generate(
+                    input_ids=tokens["input_ids"].to("cuda"),
+                    max_new_tokens=5,  # 5 token sono sufficienti per "TRUE" o "FALSE"
+                    attention_mask=attention_mask,
+                    do_sample=False,
+                    top_p=None,
+                    temperature=0.,
+                    pad_token_id=self.tokenizer.eos_token_id,
+                    return_dict_in_generate=True,
+                    output_scores=True
+                )
+
+                generated_ids = output.sequences[0][tokens["input_ids"].shape[1]:]
+                generated_text = self.tokenizer.decode(generated_ids, skip_special_tokens=True)
+
+                # Puoi salvare 'formatted_prompt' per avere traccia dell'input reale passato al modello
+                ut.save_generation_output(generated_text, formatted_prompt, instance_id, self.generation_save_dir)
+
+                if hasattr(output, 'scores') and output.scores:
+                    logits = torch.stack(output.scores, dim=1)
+                    ut.save_model_logits(logits, instance_id, self.logits_save_dir)
+
+            # Il salvataggio delle attivazioni rimane invariato
+            for module, ac in inspect.catcher.items():
+                ac_last = ac[0, -1].float()
+                layer_idx = int(module.split(".")[2])
+
+                save_name = f"layer{layer_idx}-id{instance_id}.pt"
+                if "mlp" in module:
+                    save_path = os.path.join(self.mlp_save_dir, save_name)
+                elif "self_attn" in module:
+                    save_path = os.path.join(self.attn_save_dir, save_name)
+                else:
+                    save_path = os.path.join(self.hidden_save_dir, save_name)
+
+                torch.save(ac_last, save_path)
 
         self.combine_activations()
 
@@ -222,16 +316,28 @@ class HallucinationDetection:
     # Helpers & Utilities
     # -------------
     def _prepare_inputs(self, fact, use_chat_template):
-        """Prepara e tokenizza il prompt in base alla modalità (chat o raw)."""
-        user_prompt = USER_PROMPT_TEMPLATE.format(fact=fact)
+        user_prompt = f"Is the following statement true: {fact}"
 
         if use_chat_template:
             messages = ut.build_messages(system_prompt=SYSTEM_PROMPT, user_prompt=user_prompt, k=0)
-            formatted_prompt = self.tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
+
+            # return_dict=True ci assicura di ricevere un BatchEncoding pulito
+            # che contiene in automatico "input_ids" e "attention_mask"
+            tokens = self.tokenizer.apply_chat_template(
+                messages,
+                tokenize=True,
+                add_generation_prompt=True,
+                return_tensors="pt",
+                return_dict=True
+            ).to(self.device)
+
+            # Estraiamo il prompt formattato per salvarlo nei tuoi JSON
+            formatted_prompt = self.tokenizer.decode(tokens["input_ids"][0], skip_special_tokens=False)
+
         else:
             formatted_prompt = user_prompt
+            tokens = self.tokenizer(formatted_prompt, return_tensors="pt").to(self.device)
 
-        tokens = self.tokenizer(formatted_prompt, return_tensors="pt").to(self.device)
         return formatted_prompt, tokens
 
     def _get_target_modules(self):
@@ -282,10 +388,10 @@ class HallucinationDetection:
         results_dir = os.path.join(self.project_dir, self.CACHE_DIR_NAME)
         model_name = self.llm_name.split("/")[-1]
 
-        task = self._get_task_name(self.label)
+        #task = self._get_task_name(self.label)
 
         for aa in self.ACTIVATION_TARGET:
-            act_dir = os.path.join(results_dir, model_name, self.dataset_name, f"activation_{aa}", task)
+            act_dir = os.path.join(results_dir, model_name, self.dataset_name, f"activation_{aa}")
 
             act_files = list(os.listdir(act_dir))
             act_files = [f for f in act_files if len(f.split("-")) == 2]
@@ -360,15 +466,15 @@ class HallucinationDetection:
 
         results_dir = os.path.join(self.project_dir, self.CACHE_DIR_NAME)
 
-        task = self._get_task_name(label=label)
-        print(f"Task: {task}")
+        """task = self._get_task_name(label=label)
+        print(f"Task: {task}")"""
 
-        self.hidden_save_dir = os.path.join(results_dir, model_name, self.dataset_name, "activation_hidden", task)
-        self.mlp_save_dir = os.path.join(results_dir, model_name, self.dataset_name, "activation_mlp", task)
-        self.attn_save_dir = os.path.join(results_dir, model_name, self.dataset_name, "activation_attn", task)
+        self.hidden_save_dir = os.path.join(results_dir, model_name, self.dataset_name, "activation_hidden")
+        self.mlp_save_dir = os.path.join(results_dir, model_name, self.dataset_name, "activation_mlp")
+        self.attn_save_dir = os.path.join(results_dir, model_name, self.dataset_name, "activation_attn")
 
-        self.generation_save_dir = os.path.join(results_dir, model_name, self.dataset_name, "generations", task)
-        self.logits_save_dir = os.path.join(results_dir, model_name, self.dataset_name, "logits", task)
+        self.generation_save_dir = os.path.join(results_dir, model_name, self.dataset_name, "generations")
+        self.logits_save_dir = os.path.join(results_dir, model_name, self.dataset_name, "logits")
 
         for sd in [self.hidden_save_dir, self.mlp_save_dir, self.attn_save_dir, self.generation_save_dir,
                    self.logits_save_dir]:
