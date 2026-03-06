@@ -3,7 +3,7 @@ import torch.nn as nn
 from functools import partial
 from torch.utils.hooks import RemovableHandle
 
-"""
+
 class InspectOutputContext:
     def __init__(self, model, module_names, move_to_cpu=False, last_position=False, save_generation=False, save_dir=None):
         self.model = model
@@ -61,8 +61,8 @@ class InspectOutputContext:
                 catcher[module_name] = outputs
             if move_to_cpu:
                 catcher[module_name] = catcher[module_name].cpu()
-        return outputs"""
-
+        return outputs
+"""
 import traceback
 import torch.nn as nn
 from functools import partial
@@ -132,3 +132,4 @@ class InspectOutputContext:
                 catcher[module_name] = catcher[module_name].cpu()
 
         return outputs
+"""

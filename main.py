@@ -79,7 +79,7 @@ def main():
     detector.load_llm(
         llm_name=LLM_NAME,
         use_local=False,
-        dtype=torch.float16,  # Usa float16 o bfloat16 (rtx30) a seconda della tua GPU (rtx20)
+        dtype=torch.bfloat16,  # Usa float16 o bfloat16 (rtx30) a seconda della tua GPU (rtx20)
         use_device_map=True
     )
 
@@ -89,7 +89,7 @@ def main():
 
     # 6. Estrazione e Salvataggio Attivazioni
     print("\n🧠 Inizio generazione e salvataggio attivazioni...")
-    detector.save_activations_new_prompt()
+    detector.save_activations()
 
     print("\n✅ Test completato con successo!")
     print(f"Controlla la cartella '{detector.CACHE_DIR_NAME}' per vedere i tensori salvati.")

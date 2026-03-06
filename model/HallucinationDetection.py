@@ -141,62 +141,8 @@ class HallucinationDetection:
     # -------------
     # Core Extraction Methods
     # -------------
-    def save_activations(self, use_chat_template=True):
-        module_names = self._get_target_modules()
-        system_prompt = "You are a helpful assistant. Answer truthfully with only one word: TRUE or FALSE."
-
-        for idx in tqdm(range(len(self.dataset)), desc="Saving activations"):
-            fact, fact_label, instance_id = self.dataset[idx]
-
-            # 1. Rimosso il punto interrogativo per evitare "bird.?"
-            user_prompt = f"Is the following statement true: {fact}"
-
-            # 2. Ripristinata la tua identica logica di formattazione
-            messages = ut.build_messages(
-                system_prompt=system_prompt,
-                user_prompt=user_prompt,
-                k=0
-            )
-
-            formatted_prompt = self.tokenizer.apply_chat_template(
-                messages,
-                tokenize=False,
-                add_generation_prompt=True
-            )
-
-            # 3. Ripristinato il caricamento esatto del vecchio codice (prima su CPU, poi CUDA)
-            tokens = self.tokenizer(formatted_prompt, return_tensors="pt")
-            attention_mask = tokens["attention_mask"].to("cuda") if "attention_mask" in tokens else None
-
-            with InspectOutputContext(self.llm, module_names, save_generation=True,
-                                      save_dir=self.generation_save_dir) as inspect:
-                output = self.llm.generate(
-                    input_ids=tokens["input_ids"].to("cuda"), # Spostato su CUDA qui come facevi prima
-                    max_new_tokens=5,
-                    attention_mask=attention_mask,
-                    do_sample=False,
-                    top_p=None,
-                    temperature=0.,
-                    pad_token_id=self.tokenizer.eos_token_id,
-                    return_dict_in_generate=True,
-                    output_scores=True
-                )
-
-                generated_ids = output.sequences[0][tokens["input_ids"].shape[1]:]
-                generated_text = self.tokenizer.decode(generated_ids, skip_special_tokens=True)
-
-                ut.save_generation_output(generated_text, formatted_prompt, instance_id, self.generation_save_dir)
-
-                if hasattr(output, 'scores') and output.scores:
-                    logits = torch.stack(output.scores, dim=1)
-                    ut.save_model_logits(logits, instance_id, self.logits_save_dir)
-
-            # Il salvataggio dei tensori resta gestito dalla classe per pulizia (include il detach)
-            self._save_tensors_to_disk(inspect.catcher, instance_id, is_attribution=False)
-
-        self.combine_activations()
-
-    def save_activations_new_prompt(self):
+    """
+    def save_activations(self):
         module_names = []
         module_names += [f'model.layers.{idx}' for idx in self.TARGET_LAYERS]
         module_names += [f'model.layers.{idx}.self_attn' for idx in self.TARGET_LAYERS]
@@ -209,7 +155,7 @@ class HallucinationDetection:
             fact, fact_label, instance_id = self.dataset[idx]
 
             # 2. Formatta il prompt dell'utente come facevi prima
-            user_prompt = (f"Is the following statement true: {fact}").format(fact=fact)
+            user_prompt = USER_PROMPT_TEMPLATE.format(fact=fact)
 
             # 3. Costruisci i messaggi usando la tua funzione
             messages = ut.build_messages(
@@ -225,8 +171,13 @@ class HallucinationDetection:
                 add_generation_prompt=True
             )
 
-            # 5. Tokenizza il prompt formattato anziché il testo semplice
-            tokens = self.tokenizer(formatted_prompt, return_tensors="pt")
+            tokens = self.tokenizer.apply_chat_template(
+                messages,
+                tokenize=True,
+                add_generation_prompt=True,
+                return_tensors="pt",
+                return_dict=True
+            )
             attention_mask = tokens["attention_mask"].to("cuda") if "attention_mask" in tokens else None
 
             with InspectOutputContext(self.llm, module_names, save_generation=True,
@@ -255,6 +206,61 @@ class HallucinationDetection:
 
             # Il salvataggio delle attivazioni rimane invariato
             for module, ac in inspect.catcher.items():
+                ac_last = ac[0, -1].float()
+                layer_idx = int(module.split(".")[2])
+
+                save_name = f"layer{layer_idx}-id{instance_id}.pt"
+                if "mlp" in module:
+                    save_path = os.path.join(self.mlp_save_dir, save_name)
+                elif "self_attn" in module:
+                    save_path = os.path.join(self.attn_save_dir, save_name)
+                else:
+                    save_path = os.path.join(self.hidden_save_dir, save_name)
+
+                torch.save(ac_last, save_path)
+
+        self.combine_activations()"""
+
+    def save_activations(self):
+        module_names = []
+        module_names += [f'model.layers.{idx}' for idx in self.TARGET_LAYERS]
+        module_names += [f'model.layers.{idx}.self_attn' for idx in self.TARGET_LAYERS]
+        module_names += [f'model.layers.{idx}.mlp' for idx in self.TARGET_LAYERS]
+
+        for idx in tqdm(range(len(self.dataset)), desc="Saving activations"):
+            #question, answer, instance_id = self.dataset[idx]
+            fact = self.dataset[idx]
+
+
+            model_input = USER_PROMPT_TEMPLATE.format(fact=fact)
+            tokens = self.tokenizer(model_input, return_tensors="pt")
+            attention_mask = tokens["attention_mask"].to("cuda") if "attention_mask" in tokens else None
+
+            with InspectOutputContext(self.llm, module_names, save_generation=True,
+                                      save_dir=self.generation_save_dir) as inspect:
+                output = self.llm.generate(
+                    input_ids=tokens["input_ids"].to("cuda"),
+                    max_new_tokens=self.MAX_NEW_TOKENS,
+                    attention_mask=attention_mask,
+                    do_sample=False,
+                    top_p=None,
+                    temperature=0.,
+                    pad_token_id=self.tokenizer.eos_token_id,
+                    return_dict_in_generate=True,
+                    output_scores=True
+                )
+
+                generated_ids = output.sequences[0][tokens["input_ids"].shape[1]:]
+                generated_text = self.tokenizer.decode(generated_ids, skip_special_tokens=True)
+
+                ut.save_generation_output(generated_text, model_input, instance_id, self.generation_save_dir)
+
+                if hasattr(output, 'scores') and output.scores:
+                    logits = torch.stack(output.scores, dim=1)  # [batch, seq_len, vocab_size]
+                    ut.save_model_logits(logits, instance_id, self.logits_save_dir)
+
+            for module, ac in inspect.catcher.items():
+                # ac: [batch_size, sequence_length, hidden_dim]
                 ac_last = ac[0, -1].float()
                 layer_idx = int(module.split(".")[2])
 
@@ -316,13 +322,15 @@ class HallucinationDetection:
     # Helpers & Utilities
     # -------------
     def _prepare_inputs(self, fact, use_chat_template):
+        """Prepara e tokenizza il prompt risolvendo il bug dei token speciali di Llama 3."""
+        # Prompt puliti (niente doppia punteggiatura)
+        system_prompt = "You are a helpful assistant. Answer truthfully with only one word: TRUE or FALSE."
         user_prompt = f"Is the following statement true: {fact}"
 
         if use_chat_template:
-            messages = ut.build_messages(system_prompt=SYSTEM_PROMPT, user_prompt=user_prompt, k=0)
+            messages = ut.build_messages(system_prompt=system_prompt, user_prompt=user_prompt, k=0)
 
-            # return_dict=True ci assicura di ricevere un BatchEncoding pulito
-            # che contiene in automatico "input_ids" e "attention_mask"
+            # FIX CRITICO: tokenizza DIRETTAMENTE tramite template
             tokens = self.tokenizer.apply_chat_template(
                 messages,
                 tokenize=True,
@@ -331,9 +339,8 @@ class HallucinationDetection:
                 return_dict=True
             ).to(self.device)
 
-            # Estraiamo il prompt formattato per salvarlo nei tuoi JSON
+            # Estraiamo il prompt formattato in stringa solo per salvarlo nei log JSON
             formatted_prompt = self.tokenizer.decode(tokens["input_ids"][0], skip_special_tokens=False)
-
         else:
             formatted_prompt = user_prompt
             tokens = self.tokenizer(formatted_prompt, return_tensors="pt").to(self.device)
@@ -341,37 +348,41 @@ class HallucinationDetection:
         return formatted_prompt, tokens
 
     def _get_target_modules(self):
-        """Restituisce la lista dei moduli di cui estrarre le attivazioni."""
+        """Restituisce la lista dei moduli da cui estrarre le attivazioni."""
         modules = [f'model.layers.{idx}' for idx in self.TARGET_LAYERS]
         modules += [f'model.layers.{idx}.self_attn' for idx in self.TARGET_LAYERS]
         modules += [f'model.layers.{idx}.mlp' for idx in self.TARGET_LAYERS]
         return modules
 
     def _save_tensors_to_disk(self, catcher, instance_id, is_attribution=False, target_dirs=None):
-        """Salva i tensori estratti dalle callback su disco."""
+        """Salva i tensori estratti dalle callback su disco staccandoli dalla GPU."""
         for module, tensor in catcher.items():
             if tensor is None or (is_attribution and getattr(tensor, 'grad', None) is None):
                 continue
 
             if is_attribution:
+                # Estrazione attribuzione (Act x Grad)
                 act_last = tensor[0, -1].detach().float()
                 grad_last = tensor.grad[0, -1].detach().float()
                 tensor_to_save = act_last * grad_last
             else:
+                # Estrazione attivazione semplice
                 tensor_to_save = tensor[0, -1].detach().float()
 
+            # Spostiamo sempre su CPU prima di salvare per non intasare la VRAM
             tensor_to_save = tensor_to_save.cpu()
             layer_idx = int(module.split(".")[2])
             save_name = f"layer{layer_idx}-id{instance_id}.pt"
 
-            if target_dirs:  # Directory per le attribuzioni
+            # Logica di smistamento directory
+            if target_dirs:  # Se stiamo salvando le attribuzioni
                 if "mlp" in module:
                     save_path = os.path.join(target_dirs["mlp"], save_name)
                 elif "self_attn" in module:
                     save_path = os.path.join(target_dirs["attn"], save_name)
                 else:
                     save_path = os.path.join(target_dirs["hidden"], save_name)
-            else:  # Directory per le attivazioni classiche
+            else:  # Se stiamo salvando le attivazioni classiche
                 if "mlp" in module:
                     save_path = os.path.join(self.mlp_save_dir, save_name)
                 elif "self_attn" in module:
@@ -381,8 +392,6 @@ class HallucinationDetection:
 
             torch.save(tensor_to_save, save_path)
 
-    # [resto del codice: combine_activations, compute_all_metrics, _create_folders_if_not_exists, ecc. rimangono invariati]
-    # (Per brevità ho omesso il corpo di combine_activations, che mantieni uguale alla tua versione)
 
     def combine_activations(self):
         results_dir = os.path.join(self.project_dir, self.CACHE_DIR_NAME)
