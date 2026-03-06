@@ -89,7 +89,7 @@ class HallucinationDetection:
         self._create_folders_if_not_exists(label=label)
 
         print(f"[1] Saving {self.llm_name} activations for layers {self.TARGET_LAYERS}")
-        self.save_activations(use_chat_template=use_chat_template)
+        self.save_activations()
 
     @torch.no_grad()
     def predict_kc(self, target, layer, llm_name, data_name=DEFAULT_DATASET, use_local=False, label=1):
