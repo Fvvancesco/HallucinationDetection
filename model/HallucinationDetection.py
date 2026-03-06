@@ -228,8 +228,7 @@ class HallucinationDetection:
         module_names += [f'model.layers.{idx}.mlp' for idx in self.TARGET_LAYERS]
 
         for idx in tqdm(range(len(self.dataset)), desc="Saving activations"):
-            #question, answer, instance_id = self.dataset[idx]
-            fact = self.dataset[idx]
+            fact, fact_label, instance_id = self.dataset[idx]
 
 
             model_input = USER_PROMPT_TEMPLATE.format(fact=fact)
