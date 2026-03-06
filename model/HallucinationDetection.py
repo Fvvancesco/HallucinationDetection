@@ -230,10 +230,24 @@ class HallucinationDetection:
         for idx in tqdm(range(len(self.dataset)), desc="Saving activations"):
             fact, fact_label, instance_id = self.dataset[idx]
 
+            messages = [
+                {"role": "system", "content": SYSTEM_PROMPT},
+                {"role": "user", "content": USER_PROMPT_TEMPLATE.format(fact=fact)},
+            ]
 
-            model_input = USER_PROMPT_TEMPLATE.format(fact=fact)
-            tokens = self.tokenizer(model_input, return_tensors="pt")
-            attention_mask = tokens["attention_mask"].to("cuda") if "attention_mask" in tokens else None
+            tokens = self.tokenizer.apply_chat_template(
+                messages,
+                tokenize=True,
+                add_generation_prompt=True,
+                return_tensors="pt",
+                return_dict=True
+            )
+
+
+            model_input = self.tokenizer.decode(tokens["input_ids"][0])
+            tokens = {k: v.to(self.device) for k, v in tokens.items()}
+            attention_mask = tokens.get("attention_mask")
+            #attention_mask = tokens["attention_mask"].to("cuda") if "attention_mask" in tokens else None
 
             with InspectOutputContext(self.llm, module_names, save_generation=True,
                                       save_dir=self.generation_save_dir) as inspect:
@@ -245,14 +259,29 @@ class HallucinationDetection:
                     top_p=None,
                     temperature=0.,
                     pad_token_id=self.tokenizer.eos_token_id,
+                    eos_token_id=self.tokenizer.eos_token_id,
                     return_dict_in_generate=True,
                     output_scores=True
                 )
-
+                """
                 generated_ids = output.sequences[0][tokens["input_ids"].shape[1]:]
                 generated_text = self.tokenizer.decode(generated_ids, skip_special_tokens=True)
-
                 ut.save_generation_output(generated_text, model_input, instance_id, self.generation_save_dir)
+                """
+                generated_ids = output.sequences[0][tokens["input_ids"].shape[1]:]
+
+                # porta su CPU e converti in lista di interi prima di decodificare
+                generated_ids_list = generated_ids.cpu().tolist() if hasattr(generated_ids, "cpu") else list(
+                    generated_ids)
+
+                # decodifica usando la lista (più robusto)
+                generated_text = self.tokenizer.decode(generated_ids_list, skip_special_tokens=True).strip()
+
+                # salva: passa il prompt "umano" (user_prompt / model_input) per evitare template con marker ridondanti
+                # e passa i token ids per debug
+                ut.save_generation_output(generated_text, model_input, instance_id, self.generation_save_dir)
+
+
 
                 if hasattr(output, 'scores') and output.scores:
                     logits = torch.stack(output.scores, dim=1)  # [batch, seq_len, vocab_size]
