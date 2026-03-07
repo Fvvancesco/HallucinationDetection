@@ -57,46 +57,8 @@ DATASETS_DIR = os.path.join(PROJECT_DIR, "logical_datasets")
 #Modello per il testing
 LLM_NAME = "meta-llama/Meta-Llama-3-8B-Instruct" #"TinyLlama/TinyLlama-1.1B-Chat-v1.0"
 
-def main():
-    print("-------------------------------------------------- Hallucination detection -------------------------------------------------- ")
-    #Controllo utilizzo GPU
-    print("Cuda disponibile (utilizzo la GPU): " + str(torch.cuda.is_available()))
-
-    #Login su hf per usare i modelli su licenza
-    print("Eseguo il login con il token letto da file")
-    login(open("token.txt").read().strip())
-
-    detector = HallucinationDetection(project_dir=PROJECT_DIR) # Passiamo la root al detector
-    print("Inizio pipeline di test Hallucination Detection")
-
-    # Impostiamo il percorso corretto per i file del dataset
-    detector.load_dataset(dataset_name="beliefbank", label=0) #attenzione, label inverte le etichette
-
-    detector.dataset.get_sample(max_samples=1)
-    print(f"\nDataset limitato a {len(detector.dataset)} elementi per il test rapido.\n")
-
-    #Caricamento Modello Linguistico
-    # (Imposta use_device_map=True per usare la GPU automaticamente)
-    detector.load_llm(
-        llm_name=LLM_NAME,
-        use_local=False,
-        dtype=torch.float16,  # Usa float16 o bfloat16 (rtx30) a seconda della tua GPU (rtx20)
-        use_device_map=True
-    )
-
-    # 5. Creazione delle cartelle di output
-    # Questo creerà 'activation_cache/nome_modello/beliefbank/...'
-    detector._create_folders_if_not_exists()
-
-    # 6. Estrazione e Salvataggio Attivazioni
-    print("\n🧠 Inizio generazione e salvataggio attivazioni...")
-    detector.save_activations()
-
-    print("\n✅ Test completato con successo!")
-    print(f"Controlla la cartella '{detector.CACHE_DIR_NAME}' per vedere i tensori salvati.")
-
 # Numero di elementi per ogni batch caricato da PyTorch
-TEST_SIZE = 100
+TEST_SIZE = 1000
 
 if __name__ == "__main__":
     c = 2#input("Scegli la modalita' di testing:\n1. Dataset\n2. LLM\nScelta: ")
@@ -153,4 +115,40 @@ if __name__ == "__main__":
         # Disabilita eventuali warning noiosi sui symlink di HuggingFace (opzionale)
         os.environ["HF_HUB_DISABLE_SYMLINKS_WARNING"] = "1"
 
-        main()
+        print(
+            "-------------------------------------------------- Hallucination detection -------------------------------------------------- ")
+        # Controllo utilizzo GPU
+        print("Cuda disponibile (utilizzo la GPU): " + str(torch.cuda.is_available()))
+
+        # Login su hf per usare i modelli su licenza
+        print("Eseguo il login con il token letto da file")
+        login(open("token.txt").read().strip())
+
+        detector = HallucinationDetection(project_dir=PROJECT_DIR)  # Passiamo la root al detector
+        print("Inizio pipeline di test Hallucination Detection")
+
+        # Impostiamo il percorso corretto per i file del dataset
+        detector.load_dataset(dataset_name="beliefbank", label=0)  # attenzione, label inverte le etichette
+
+        detector.dataset.get_sample(max_samples=TEST_SIZE)
+        print(f"\nDataset limitato a {len(detector.dataset)} elementi per il test rapido.\n")
+
+        # Caricamento Modello Linguistico
+        # (Imposta use_device_map=True per usare la GPU automaticamente)
+        detector.load_llm(
+            llm_name=LLM_NAME,
+            use_local=False,
+            dtype=torch.float16,  # Usa float16 o bfloat16 (rtx30) a seconda della tua GPU (rtx20)
+            use_device_map=True
+        )
+
+        # 5. Creazione delle cartelle di output
+        # Questo creerà 'activation_cache/nome_modello/beliefbank/...'
+        detector._create_folders_if_not_exists()
+
+        # 6. Estrazione e Salvataggio Attivazioni
+        print("\n🧠 Inizio generazione e salvataggio attivazioni...")
+        detector.save_activations()
+
+        print("\n✅ Test completato con successo!")
+        print(f"Controlla la cartella '{detector.CACHE_DIR_NAME}' per vedere i tensori salvati.")

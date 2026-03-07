@@ -53,7 +53,7 @@ class HallucinationDetection:
             self.dataset_name = "beliefbank"
             self.dataset = BeliefBankDataset(
                 project_root=self.project_dir,
-                data_type="facts",
+                data_type="constraints",
                 label=label,
                 shuffle=False
             )
