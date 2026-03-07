@@ -12,12 +12,8 @@ from prober.KCProbing import KCProbing
 # -------------
 # Prompts Globali
 # -------------
-#SYSTEM_PROMPT = "You are a helpful assistant. Answer truthfully with only one word: TRUE or FALSE."
-SYSTEM_PROMPT = (
-    "You are a helpful assistant.\n"
-    "Answer the question with exactly one word: TRUE or FALSE."
-)
-USER_PROMPT_TEMPLATE = "Is the following statement true: {fact}"
+SYSTEM_PROMPT = "You are a helpful assistant. Answer truthfully with only one word: TRUE or FALSE."
+USER_PROMPT_TEMPLATE = "Is the following statement true: {fact}?"
 
 
 class HallucinationDetection:
@@ -53,7 +49,7 @@ class HallucinationDetection:
             self.dataset_name = "beliefbank"
             self.dataset = BeliefBankDataset(
                 project_root=self.project_dir,
-                data_type="constraints",
+                data_type="facts",
                 label=label,
                 shuffle=False
             )
@@ -93,7 +89,7 @@ class HallucinationDetection:
         self._create_folders_if_not_exists(label=label)
 
         print(f"[1] Saving {self.llm_name} activations for layers {self.TARGET_LAYERS}")
-        self.save_activations()
+        self.save_activations(use_chat_template=use_chat_template)
 
     @torch.no_grad()
     def predict_kc(self, target, layer, llm_name, data_name=DEFAULT_DATASET, use_local=False, label=1):
@@ -110,7 +106,6 @@ class HallucinationDetection:
             results_dir=os.path.join(self.project_dir, self.CACHE_DIR_NAME)
         )
 
-
         preds = []
         for activation, instance_id in zip(activations, instance_ids):
             preds.append({
@@ -120,7 +115,8 @@ class HallucinationDetection:
                 "label": label
             })
 
-        path_to_save = os.path.join(result_path, self.dataset_name, target, self.PREDICTIONS_FILE_NAME.format(layer=self.kc_layer))
+        path_to_save = os.path.join(result_path, self.dataset_name, target,
+                                    self.PREDICTIONS_FILE_NAME.format(layer=self.kc_layer))
         os.makedirs(os.path.dirname(path_to_save), exist_ok=True)
 
         if os.path.exists(path_to_save):
@@ -133,7 +129,8 @@ class HallucinationDetection:
 
     def eval(self, target, llm_name, data_name=DEFAULT_DATASET):
         result_path = os.path.join(self.project_dir, self.PREDICTION_DIR, llm_name)
-        preds_path = os.path.join(result_path, data_name, target, self.PREDICTIONS_FILE_NAME.format(layer=self.kc_layer))
+        preds_path = os.path.join(result_path, data_name, target,
+                                  self.PREDICTIONS_FILE_NAME.format(layer=self.kc_layer))
 
         if not os.path.exists(preds_path):
             raise FileNotFoundError(f"Predictions file not found: {preds_path}")
@@ -145,165 +142,42 @@ class HallucinationDetection:
     # -------------
     # Core Extraction Methods
     # -------------
-    """
-    def save_activations(self):
-        module_names = []
-        module_names += [f'model.layers.{idx}' for idx in self.TARGET_LAYERS]
-        module_names += [f'model.layers.{idx}.self_attn' for idx in self.TARGET_LAYERS]
-        module_names += [f'model.layers.{idx}.mlp' for idx in self.TARGET_LAYERS]
-
-        # 1. Definisci il System Prompt (fuori dal loop per pulizia)
-        system_prompt = "You are a helpful assistant. Answer truthfully with only one word: TRUE or FALSE."
+    def save_activations(self, use_chat_template=True):
+        module_names = self._get_target_modules()
 
         for idx in tqdm(range(len(self.dataset)), desc="Saving activations"):
             fact, fact_label, instance_id = self.dataset[idx]
 
-            # 2. Formatta il prompt dell'utente come facevi prima
-            user_prompt = USER_PROMPT_TEMPLATE.format(fact=fact)
-
-            # 3. Costruisci i messaggi usando la tua funzione
-            messages = ut.build_messages(
-                system_prompt=system_prompt,
-                user_prompt=user_prompt,
-                k=0
-            )
-
-            # 4. Applica il chat template del modello Instruct
-            formatted_prompt = self.tokenizer.apply_chat_template(
-                messages,
-                tokenize=False,
-                add_generation_prompt=True
-            )
-
-            tokens = self.tokenizer.apply_chat_template(
-                messages,
-                tokenize=True,
-                add_generation_prompt=True,
-                return_tensors="pt",
-                return_dict=True
-            )
-            attention_mask = tokens["attention_mask"].to("cuda") if "attention_mask" in tokens else None
+            formatted_prompt, tokens = self._prepare_inputs(fact, use_chat_template)
+            attention_mask = tokens.get("attention_mask")
 
             with InspectOutputContext(self.llm, module_names, save_generation=True,
                                       save_dir=self.generation_save_dir) as inspect:
                 output = self.llm.generate(
-                    input_ids=tokens["input_ids"].to("cuda"),
-                    max_new_tokens=5,  # 5 token sono sufficienti per "TRUE" o "FALSE"
+                    input_ids=tokens["input_ids"],
+                    max_new_tokens=self.MAX_NEW_TOKENS,
                     attention_mask=attention_mask,
                     do_sample=False,
-                    top_p=None,
                     temperature=0.,
                     pad_token_id=self.tokenizer.eos_token_id,
                     return_dict_in_generate=True,
                     output_scores=True
                 )
 
-                generated_ids = output.sequences[0][tokens["input_ids"].shape[1]:]
-                generated_text = self.tokenizer.decode(generated_ids, skip_special_tokens=True)
 
-                # Puoi salvare 'formatted_prompt' per avere traccia dell'input reale passato al modello
+                generated_ids = output.sequences[0][tokens["input_ids"].shape[1]:]
+                """
+                generated_text = self.tokenizer.decode(generated_ids, skip_special_tokens=True)
+                """
+                generated_ids_list = generated_ids.cpu().tolist() if hasattr(generated_ids, "cpu") else list(generated_ids)
+                generated_text = self.tokenizer.decode(generated_ids_list, skip_special_tokens=True).strip()
                 ut.save_generation_output(generated_text, formatted_prompt, instance_id, self.generation_save_dir)
 
                 if hasattr(output, 'scores') and output.scores:
                     logits = torch.stack(output.scores, dim=1)
                     ut.save_model_logits(logits, instance_id, self.logits_save_dir)
 
-            # Il salvataggio delle attivazioni rimane invariato
-            for module, ac in inspect.catcher.items():
-                ac_last = ac[0, -1].float()
-                layer_idx = int(module.split(".")[2])
-
-                save_name = f"layer{layer_idx}-id{instance_id}.pt"
-                if "mlp" in module:
-                    save_path = os.path.join(self.mlp_save_dir, save_name)
-                elif "self_attn" in module:
-                    save_path = os.path.join(self.attn_save_dir, save_name)
-                else:
-                    save_path = os.path.join(self.hidden_save_dir, save_name)
-
-                torch.save(ac_last, save_path)
-
-        self.combine_activations()"""
-
-    def save_activations(self):
-        module_names = []
-        module_names += [f'model.layers.{idx}' for idx in self.TARGET_LAYERS]
-        module_names += [f'model.layers.{idx}.self_attn' for idx in self.TARGET_LAYERS]
-        module_names += [f'model.layers.{idx}.mlp' for idx in self.TARGET_LAYERS]
-
-        for idx in tqdm(range(len(self.dataset)), desc="Saving activations"):
-            fact, fact_label, instance_id = self.dataset[idx]
-
-            messages = [
-                {"role": "system", "content": SYSTEM_PROMPT},
-                {"role": "user", "content": USER_PROMPT_TEMPLATE.format(fact=fact)},
-            ]
-
-            tokens = self.tokenizer.apply_chat_template(
-                messages,
-                tokenize=True,
-                add_generation_prompt=True,
-                return_tensors="pt",
-                return_dict=True
-            )
-
-
-            model_input = self.tokenizer.decode(tokens["input_ids"][0])
-            tokens = {k: v.to(self.device) for k, v in tokens.items()}
-            attention_mask = tokens.get("attention_mask")
-            #attention_mask = tokens["attention_mask"].to("cuda") if "attention_mask" in tokens else None
-
-            with InspectOutputContext(self.llm, module_names, save_generation=True,
-                                      save_dir=self.generation_save_dir) as inspect:
-                output = self.llm.generate(
-                    input_ids=tokens["input_ids"].to("cuda"),
-                    max_new_tokens=self.MAX_NEW_TOKENS,
-                    attention_mask=attention_mask,
-                    do_sample=False,
-                    top_p=None,
-                    temperature=0.,
-                    pad_token_id=self.tokenizer.eos_token_id,
-                    eos_token_id=self.tokenizer.eos_token_id,
-                    return_dict_in_generate=True,
-                    output_scores=True
-                )
-                """
-                generated_ids = output.sequences[0][tokens["input_ids"].shape[1]:]
-                generated_text = self.tokenizer.decode(generated_ids, skip_special_tokens=True)
-                ut.save_generation_output(generated_text, model_input, instance_id, self.generation_save_dir)
-                """
-                generated_ids = output.sequences[0][tokens["input_ids"].shape[1]:]
-
-                # porta su CPU e converti in lista di interi prima di decodificare
-                generated_ids_list = generated_ids.cpu().tolist() if hasattr(generated_ids, "cpu") else list(
-                    generated_ids)
-
-                # decodifica usando la lista (più robusto)
-                generated_text = self.tokenizer.decode(generated_ids_list, skip_special_tokens=True).strip()
-
-                # salva: passa il prompt "umano" (user_prompt / model_input) per evitare template con marker ridondanti
-                # e passa i token ids per debug
-                ut.save_generation_output(generated_text, model_input, instance_id, self.generation_save_dir)
-
-
-                if hasattr(output, 'scores') and output.scores:
-                    logits = torch.stack(output.scores, dim=1)  # [batch, seq_len, vocab_size]
-                    ut.save_model_logits(logits, instance_id, self.logits_save_dir)
-
-            for module, ac in inspect.catcher.items():
-                # ac: [batch_size, sequence_length, hidden_dim]
-                ac_last = ac[0, -1].float()
-                layer_idx = int(module.split(".")[2])
-
-                save_name = f"layer{layer_idx}-id{instance_id}.pt"
-                if "mlp" in module:
-                    save_path = os.path.join(self.mlp_save_dir, save_name)
-                elif "self_attn" in module:
-                    save_path = os.path.join(self.attn_save_dir, save_name)
-                else:
-                    save_path = os.path.join(self.hidden_save_dir, save_name)
-
-                torch.save(ac_last, save_path)
+            self._save_tensors_to_disk(inspect.catcher, instance_id, is_attribution=False)
 
         self.combine_activations()
 
@@ -353,67 +227,64 @@ class HallucinationDetection:
     # Helpers & Utilities
     # -------------
     def _prepare_inputs(self, fact, use_chat_template):
-        """Prepara e tokenizza il prompt risolvendo il bug dei token speciali di Llama 3."""
-        # Prompt puliti (niente doppia punteggiatura)
-        system_prompt = "You are a helpful assistant. Answer truthfully with only one word: TRUE or FALSE."
-        user_prompt = f"Is the following statement true: {fact}"
+        """Prepara e tokenizza il prompt, restituendo stringa pulita per i log e dict di tensori."""
+        user_prompt = USER_PROMPT_TEMPLATE.format(fact=fact)
 
         if use_chat_template:
-            messages = ut.build_messages(system_prompt=system_prompt, user_prompt=user_prompt, k=0)
+            # Sfruttiamo build_messages importato da utils
+            messages = ut.build_messages(
+                system_prompt=SYSTEM_PROMPT,
+                user_prompt=user_prompt,
+                k=0
+            )
 
-            # FIX CRITICO: tokenizza DIRETTAMENTE tramite template
             tokens = self.tokenizer.apply_chat_template(
                 messages,
                 tokenize=True,
                 add_generation_prompt=True,
                 return_tensors="pt",
                 return_dict=True
-            ).to(self.device)
-
-            # Estraiamo il prompt formattato in stringa solo per salvarlo nei log JSON
-            formatted_prompt = self.tokenizer.decode(tokens["input_ids"][0], skip_special_tokens=False)
+            )
+            model_input = self.tokenizer.decode(tokens["input_ids"][0])
+            tokens = {k: v.to(self.device) for k, v in tokens.items()}
         else:
-            formatted_prompt = user_prompt
-            tokens = self.tokenizer(formatted_prompt, return_tensors="pt").to(self.device)
+            model_input = user_prompt
+            tokens = self.tokenizer(model_input, return_tensors="pt").to(self.device)
 
-        return formatted_prompt, tokens
+        return model_input, tokens
 
     def _get_target_modules(self):
-        """Restituisce la lista dei moduli da cui estrarre le attivazioni."""
+        """Restituisce la lista dei moduli di cui estrarre le attivazioni."""
         modules = [f'model.layers.{idx}' for idx in self.TARGET_LAYERS]
         modules += [f'model.layers.{idx}.self_attn' for idx in self.TARGET_LAYERS]
         modules += [f'model.layers.{idx}.mlp' for idx in self.TARGET_LAYERS]
         return modules
 
     def _save_tensors_to_disk(self, catcher, instance_id, is_attribution=False, target_dirs=None):
-        """Salva i tensori estratti dalle callback su disco staccandoli dalla GPU."""
+        """Salva i tensori estratti dalle callback su disco."""
         for module, tensor in catcher.items():
             if tensor is None or (is_attribution and getattr(tensor, 'grad', None) is None):
                 continue
 
             if is_attribution:
-                # Estrazione attribuzione (Act x Grad)
                 act_last = tensor[0, -1].detach().float()
                 grad_last = tensor.grad[0, -1].detach().float()
                 tensor_to_save = act_last * grad_last
             else:
-                # Estrazione attivazione semplice
                 tensor_to_save = tensor[0, -1].detach().float()
 
-            # Spostiamo sempre su CPU prima di salvare per non intasare la VRAM
             tensor_to_save = tensor_to_save.cpu()
             layer_idx = int(module.split(".")[2])
             save_name = f"layer{layer_idx}-id{instance_id}.pt"
 
-            # Logica di smistamento directory
-            if target_dirs:  # Se stiamo salvando le attribuzioni
+            if target_dirs:  # Directory per le attribuzioni
                 if "mlp" in module:
                     save_path = os.path.join(target_dirs["mlp"], save_name)
                 elif "self_attn" in module:
                     save_path = os.path.join(target_dirs["attn"], save_name)
                 else:
                     save_path = os.path.join(target_dirs["hidden"], save_name)
-            else:  # Se stiamo salvando le attivazioni classiche
+            else:  # Directory per le attivazioni classiche
                 if "mlp" in module:
                     save_path = os.path.join(self.mlp_save_dir, save_name)
                 elif "self_attn" in module:

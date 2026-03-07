@@ -2,7 +2,7 @@ import os
 import torch
 
 from logical_datasets.BeliefBankDataset import BeliefBankDataset
-from model.HallucinationDetection_refactored import HallucinationDetection
+from model.HallucinationDetection import HallucinationDetection
 
 from huggingface_hub import login
 """
@@ -58,7 +58,7 @@ DATASETS_DIR = os.path.join(PROJECT_DIR, "logical_datasets")
 LLM_NAME = "meta-llama/Meta-Llama-3-8B-Instruct" #"TinyLlama/TinyLlama-1.1B-Chat-v1.0"
 
 # Numero di elementi per ogni batch caricato da PyTorch
-TEST_SIZE = 1000
+TEST_SIZE = 100
 
 if __name__ == "__main__":
     c = 2#input("Scegli la modalita' di testing:\n1. Dataset\n2. LLM\nScelta: ")
