@@ -6,7 +6,6 @@ from typing import Union, Any
 from accelerate import PartialState
 from transformers import AutoTokenizer, AutoModelForCausalLM
 from transformers import BitsAndBytesConfig
-from model.LlaMa import LlamaForCausalLM
 from model.InspectOutputContext import InspectOutputContext
 
 HF_DEFAULT_HOME = os.environ.get("HF_HOME", "~/.cache/huggingface/hub")
