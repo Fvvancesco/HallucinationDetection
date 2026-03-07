@@ -286,7 +286,6 @@ class HallucinationDetection:
                 ut.save_generation_output(generated_text, model_input, instance_id, self.generation_save_dir)
 
 
-
                 if hasattr(output, 'scores') and output.scores:
                     logits = torch.stack(output.scores, dim=1)  # [batch, seq_len, vocab_size]
                     ut.save_model_logits(logits, instance_id, self.logits_save_dir)

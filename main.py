@@ -99,7 +99,7 @@ def main():
 TEST_SIZE = 100
 
 if __name__ == "__main__":
-    c = input("Scegli la modalita' di testing:\n1. Dataset\n2. LLM\nScelta: ")
+    c = 2#input("Scegli la modalita' di testing:\n1. Dataset\n2. LLM\nScelta: ")
     if c == "1":
         from torch.utils.data import DataLoader
 
