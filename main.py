@@ -2,7 +2,7 @@ import os
 import torch
 
 from logical_datasets.BeliefBankDataset import BeliefBankDataset
-from model.HallucinationDetection import HallucinationDetection
+from model.HallucinationDetection_refactored import HallucinationDetection
 
 from huggingface_hub import login
 """
@@ -138,7 +138,7 @@ if __name__ == "__main__":
         detector.load_llm(
             llm_name=LLM_NAME,
             use_local=False,
-            dtype=torch.float16,  # Usa float16 o bfloat16 (rtx30) a seconda della tua GPU (rtx20)
+            dtype=torch.bfloat16,  # Usa float16 o bfloat16 (rtx30) a seconda della tua GPU (rtx20)
             use_device_map=True
         )
 

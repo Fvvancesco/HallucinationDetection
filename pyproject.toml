@@ -12,6 +12,7 @@ dependencies = [
     "wandb>=0.25.0",
     "torch==2.5.1+cu121",
     "torchaudio==2.5.1+cu121",
+    "ipykernel>=7.2.0",
 ]
 
 # DICIAMO A UV QUALE INDICE USARE PER QUESTI DUE PACCHETTI
