@@ -4,7 +4,7 @@ import torch
 from pathlib import Path
 from typing import Union, Any
 from accelerate import PartialState
-from transformers import AutoTokenizer
+from transformers import AutoTokenizer, AutoModelForCausalLM
 from transformers import BitsAndBytesConfig
 from model.LlaMa import LlamaForCausalLM
 from model.InspectOutputContext import InspectOutputContext
@@ -68,6 +68,32 @@ def load_llm(model_name, bnb_config, local=False, dtype=torch.bfloat16, use_devi
     max_memory_config = max_memory if use_device_map else None
 
     if not local:
+        model = AutoModelForCausalLM.from_pretrained(  # <-- Changed here
+            model_name,
+            use_cache=False,
+            attn_implementation=attention,
+            quantization_config=bnb_config,
+            torch_dtype=dtype,
+            device_map={'': device_string},
+            max_memory=max_memory_config
+        )
+    else:
+        model_local_path = get_weight_dir(model_name)
+        model = AutoModelForCausalLM.from_pretrained(  # <-- Changed here
+            model_local_path,
+            local_files_only=True,
+            use_cache=False,
+            attn_implementation=attention,
+            quantization_config=bnb_config,
+            torch_dtype=dtype,
+            device_map={'': device_string},
+            max_memory=max_memory_config,
+        )
+
+    return model
+
+    """
+    if not local:
         model = LlamaForCausalLM.from_pretrained(
             model_name,
             use_cache=False,
@@ -88,9 +114,7 @@ def load_llm(model_name, bnb_config, local=False, dtype=torch.bfloat16, use_devi
             torch_dtype=dtype,
             device_map={'':device_string}, #device_map_config,       #{'':device_string}, # dispatch efficiently the model on the available ressources
             max_memory=max_memory_config,
-        )
-
-    return model
+        )"""
 
 
 def load_tokenizer(model_name, local=False):
