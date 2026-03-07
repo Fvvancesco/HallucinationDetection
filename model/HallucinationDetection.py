@@ -181,6 +181,112 @@ class HallucinationDetection:
 
         self.combine_activations()
 
+    def _init_buffers(self):
+        """Inizializza o resetta i buffer in RAM per il chunking."""
+        self.activation_buffer = {
+            target: {layer: [] for layer in self.TARGET_LAYERS}
+            for target in self.ACTIVATION_TARGET
+        }
+        self.instance_ids_buffer = {layer: [] for layer in self.TARGET_LAYERS}
+
+    def save_activations_only_ram(self, use_chat_template=True, chunk_size=1000):
+        module_names = self._get_target_modules()
+
+        # Inizializziamo il primo buffer vuoto
+        self._init_buffers()
+        chunk_idx = 0
+
+        for idx in tqdm(range(len(self.dataset)), desc="Saving activations"):
+            fact, fact_label, instance_id = self.dataset[idx]
+
+            model_input, tokens = self._prepare_inputs(fact, use_chat_template)
+            attention_mask = tokens.get("attention_mask")
+
+            with InspectOutputContext(self.llm, module_names, save_generation=True,
+                                      save_dir=self.generation_save_dir) as inspect:
+                output = self.llm.generate(
+                    input_ids=tokens["input_ids"],
+                    max_new_tokens=self.MAX_NEW_TOKENS,
+                    attention_mask=attention_mask,
+                    do_sample=False,
+                    temperature=0.,
+                    pad_token_id=self.tokenizer.eos_token_id,
+                    eos_token_id=self.tokenizer.eos_token_id,
+                    return_dict_in_generate=True,
+                    output_scores=True
+                )
+
+                generated_ids = output.sequences[0][tokens["input_ids"].shape[1]:]
+                generated_ids_list = generated_ids.cpu().tolist() if hasattr(generated_ids, "cpu") else list(
+                    generated_ids)
+                generated_text = self.tokenizer.decode(generated_ids_list, skip_special_tokens=True).strip()
+                ut.save_generation_output(generated_text, model_input, instance_id, self.generation_save_dir)
+
+                if hasattr(output, 'scores') and output.scores:
+                    logits = torch.stack(output.scores, dim=1)
+                    ut.save_model_logits(logits, instance_id, self.logits_save_dir)
+
+            # Accodiamo in RAM
+            self._bufferize_tensors(inspect.catcher, instance_id)
+
+            # --- LOGICA DI CHUNKING ---
+            # Se abbiamo raggiunto la dimensione del blocco, salviamo su disco e resettiamo
+            if (idx + 1) % chunk_size == 0:
+                self._flush_buffer_to_disk(chunk_idx)
+                chunk_idx += 1
+                self._init_buffers()  # Svuota la RAM per il prossimo blocco
+
+        # --- SALVATAGGIO FINALE ---
+        # Alla fine del ciclo, salviamo eventuali dati rimanenti (l'ultimo blocco parziale)
+        if len(self.instance_ids_buffer[self.TARGET_LAYERS[0]]) > 0:
+            self._flush_buffer_to_disk(chunk_idx)
+
+    def _bufferize_tensors(self, catcher, instance_id):
+        """Prende i tensori catturati e li salva nel dizionario in RAM."""
+        for module, tensor in catcher.items():
+            if tensor is None:
+                continue
+
+            # Prende l'ultimo token, lo sposta su CPU e usa bfloat16 per dimezzare il peso in RAM
+            tensor_to_save = tensor[0, -1].detach().cpu().to(torch.bfloat16)
+            layer_idx = int(module.split(".")[2])
+
+            # Smistamento nel target giusto (hidden, mlp, attn)
+            if "mlp" in module:
+                self.activation_buffer["mlp"][layer_idx].append(tensor_to_save)
+            elif "self_attn" in module:
+                self.activation_buffer["attn"][layer_idx].append(tensor_to_save)
+            else:
+                self.activation_buffer["hidden"][layer_idx].append(tensor_to_save)
+                # Salviamo l'instance id una volta sola (usiamo il blocco 'hidden' come riferimento)
+                self.instance_ids_buffer[layer_idx].append(instance_id)
+
+    def _flush_buffer_to_disk(self, chunk_idx):
+        """Prende tutto ciò che è in RAM, lo impila (stack) e crea i file finali con l'indice del chunk."""
+        print(f"\nSaving chunk {chunk_idx} to disk...")
+        model_name = self.llm_name.split("/")[-1]
+        results_dir = os.path.join(self.project_dir, self.CACHE_DIR_NAME)
+
+        for target in self.ACTIVATION_TARGET:
+            act_dir = os.path.join(results_dir, model_name, self.dataset_name, f"activation_{target}")
+            os.makedirs(act_dir, exist_ok=True)
+
+            for layer_idx in self.TARGET_LAYERS:
+                # Impila tutte le attivazioni di questo layer per il chunk corrente
+                stacked_acts = torch.stack(self.activation_buffer[target][layer_idx])
+
+                # Salva il tensore aggiungendo l'indice del blocco al nome del file
+                save_path = os.path.join(act_dir, f"layer{layer_idx}_activations_chunk{chunk_idx}.pt")
+                torch.save(stacked_acts, save_path)
+
+                # Salva gli IDs corrispondenti
+                if target == "hidden":
+                    ids_save_path = os.path.join(act_dir, f"layer{layer_idx}_instance_ids_chunk{chunk_idx}.json")
+                    with open(ids_save_path, "w") as f:
+                        json.dump(self.instance_ids_buffer[layer_idx], f, indent=4)
+
+        print(f"Chunk {chunk_idx} saved successfully!")
+
     def save_attributions_and_grads(self):
         print("--" * 25 + " Saving Attributions (Act x Grad) " + "--" * 25)
         torch.set_grad_enabled(True)
