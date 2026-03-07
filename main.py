@@ -1,6 +1,7 @@
 import os
 import torch
 
+from logical_datasets.BeliefBankDataset import BeliefBankDataset
 from model.HallucinationDetection import HallucinationDetection
 
 from huggingface_hub import login
@@ -63,7 +64,7 @@ def main():
 
     #Login su hf per usare i modelli su licenza
     print("Eseguo il login con il token letto da file")
-    login(open("token.txt").read())
+    login(open("token.txt").read().strip())
 
     detector = HallucinationDetection(project_dir=PROJECT_DIR) # Passiamo la root al detector
     print("Inizio pipeline di test Hallucination Detection")
@@ -94,9 +95,62 @@ def main():
     print("\n✅ Test completato con successo!")
     print(f"Controlla la cartella '{detector.CACHE_DIR_NAME}' per vedere i tensori salvati.")
 
+# Numero di elementi per ogni batch caricato da PyTorch
+TEST_SIZE = 100
 
-if __name__ == '__main__':
-    # Disabilita eventuali warning noiosi sui symlink di HuggingFace (opzionale)
-    os.environ["HF_HUB_DISABLE_SYMLINKS_WARNING"] = "1"
+if __name__ == "__main__":
+    c = input("Scegli la modalita' di testing:\n1. Dataset\n2. LLM\nScelta: ")
+    if c == "1":
+        from torch.utils.data import DataLoader
 
-    main()
+        # 1. Definisci la root del progetto
+        # (Sostituisci "." con il percorso assoluto se i file si trovano altrove)
+        PROJECT_ROOT = "."
+
+        print(f"🛠️ Inizializzazione del dataset da: {os.path.abspath(PROJECT_ROOT)}")
+
+        try:
+            # 2. Istanzia il dataset
+            dataset = BeliefBankDataset(
+                project_root=PROJECT_ROOT,
+                recreate_ids=True,
+                data_type="constraints",  # Cambia in "constraints" per testare l'estrazione logica
+                label=0,
+                shuffle=True
+            )
+
+            print(f"✅ Dataset caricato con successo! Elementi totali: {len(dataset)}")
+
+            # 3. Test di accesso singolo (__getitem__)
+            print("\n--- 🔍 Test Accesso Singolo ---")
+            fact, label, instance_id = dataset[0]
+            print(f"ID Istanza : {instance_id}")
+            print(f"Fatto      : {fact}")
+            print(f"Etichetta  : {label}")
+
+            # 4. Test con PyTorch DataLoader (Simulazione Training)
+            print(f"\n--- 📦 Test DataLoader (Batch Size = {TEST_SIZE}) ---")
+            # Il DataLoader raggruppa i dati in blocchi (batch) ottimali per la GPU
+            dataloader = DataLoader(dataset, batch_size=TEST_SIZE, shuffle=True)
+
+            # Estrai il primo batch (gruppo) di dati
+            batch_facts, batch_labels, batch_ids = next(iter(dataloader))
+
+            # Stampa i risultati del primo batch
+            for i in range(TEST_SIZE):
+                print(f"[{batch_ids[i].item():04d}] {batch_facts[i]} --> {batch_labels[i]}")
+
+        except FileNotFoundError as e:
+            # Gestione errori se i file JSON non sono nella cartella corretta
+            print(f"\n❌ Errore di percorso: Non riesco a trovare i file JSON.")
+            print(f"Assicurati di avere la seguente struttura:")
+            print(f"{PROJECT_ROOT}/data/beliefbank/constraints_v2.json")
+            print(f"{PROJECT_ROOT}/data/beliefbank/calibration_facts.json")
+            print(f"Dettaglio: {e}")
+        except Exception as e:
+            print(f"\n❌ Errore inaspettato durante l'esecuzione: {e}")
+    else:
+        # Disabilita eventuali warning noiosi sui symlink di HuggingFace (opzionale)
+        os.environ["HF_HUB_DISABLE_SYMLINKS_WARNING"] = "1"
+
+        main()

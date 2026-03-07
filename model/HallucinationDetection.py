@@ -12,7 +12,11 @@ from prober.KCProbing import KCProbing
 # -------------
 # Prompts Globali
 # -------------
-SYSTEM_PROMPT = "You are a helpful assistant. Answer truthfully with only one word: TRUE or FALSE."
+#SYSTEM_PROMPT = "You are a helpful assistant. Answer truthfully with only one word: TRUE or FALSE."
+SYSTEM_PROMPT = (
+    "You are a helpful assistant.\n"
+    "Answer the question with exactly one word: TRUE or FALSE."
+)
 USER_PROMPT_TEMPLATE = "Is the following statement true: {fact}"
 
 
