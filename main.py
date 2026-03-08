@@ -4,6 +4,7 @@ import torch
 from torch.utils.data import DataLoader
 from huggingface_hub import login
 
+from attributions.analysis import AttributionAnalyzer
 from logical_datasets.BeliefBankDataset import BeliefBankDataset
 from model.HallucinationDetection import HallucinationDetection
 
@@ -102,6 +103,22 @@ def test_attribution(args):
 
     detector = HallucinationDetection(project_dir=PROJECT_DIR)
 
+    # 1. Caricamento Dataset
+    detector.load_dataset(dataset_name=args.data_name, label=args.label)
+
+    # Limitiamo il dataset se richiesto per un test veloce
+    if args.test_size > 0:
+        detector.dataset.get_sample(max_samples=args.test_size)
+        print(f"\n✂️ Dataset limitato a {len(detector.dataset)} elementi per il test rapido.\n")
+
+    # 2. Caricamento Modello
+    detector.load_llm(
+        llm_name=args.model_name,
+        use_local=args.use_local,
+        dtype=torch.bfloat16,
+        use_device_map=True
+    )
+
     # 3. Setup Cartelle e Generazione
     detector._create_folders_if_not_exists(label=args.label)
 
@@ -153,10 +170,12 @@ def run_full_pipeline(args):
 def main():
     parser = argparse.ArgumentParser(description="Toolkit per Test ed Estrazione Hallucination Detection")
 
-    # Scegli la modalità di esecuzione
     parser.add_argument("--mode", type=str, required=True,
-                        choices=["test_dataset", "test_extraction", "full_pipeline"],
+                        choices=["test_dataset", "test_extraction", "test_attribution", "full_pipeline", "analyze"],
                         help="Scegli quale test o pipeline eseguire.")
+
+    # Aggiungi questo parametro per l'analizzatore
+    parser.add_argument("--instance_id", type=int, default=0, help="ID della frase da analizzare.")
 
     # Parametri globali
     parser.add_argument("--model_name", type=str, default="meta-llama/Meta-Llama-3-8B-Instruct",
@@ -170,7 +189,7 @@ def main():
     # Parametri di utilità per i test
     parser.add_argument("--test_size", type=int, default=100,
                         help="Numero massimo di campioni per un test rapido (usa 0 per tutto il dataset).")
-    parser.add_argument("--batch_size", type=int, default=10, help="Dimensione del batch per il test del Dataloader.")
+    parser.add_argument("--batch_size", type=int, default=100000, help="Dimensione del batch per il test del Dataloader.")
 
     args = parser.parse_args()
 
@@ -181,6 +200,18 @@ def main():
         test_extraction(args)
     elif args.mode == "test_attribution":
         test_attribution(args)
+    elif args.mode == "analyze":
+        print("\n🔍 Avvio Analizzatore di Attribuzioni...")
+        analyzer = AttributionAnalyzer(PROJECT_DIR, args.model_name, data_name=args.data_name, label=args.label)
+
+        # 1. Dove si trova la conoscenza logica?
+        analyzer.plot_layer_profile(args.instance_id)
+
+        # 2. Quando (su quale parola) il layer 20 si è "svegliato"?
+        analyzer.plot_word_heatmap(args.instance_id, module="mlp", layer=20)
+
+        # 3. Chi (quali canali) ha spinto la decisione finale nell'ultimo strato?
+        analyzer.hunt_top_dimensions(args.instance_id, module="hidden", layer=31, top_k=5)
     elif args.mode == "full_pipeline":
         run_full_pipeline(args)
     else:

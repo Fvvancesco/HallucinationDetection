@@ -13,6 +13,7 @@ dependencies = [
     "torch==2.5.1+cu121",
     "torchaudio==2.5.1+cu121",
     "ipykernel>=7.2.0",
+    "matplotlib>=3.10.8",
 ]
 
 # DICIAMO A UV QUALE INDICE USARE PER QUESTI DUE PACCHETTI

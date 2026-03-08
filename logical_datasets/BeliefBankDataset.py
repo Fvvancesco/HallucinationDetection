@@ -83,7 +83,7 @@ class BeliefBankDataset(Dataset):
         self.dataset = self.dataset.iloc[:max_samples].reset_index(drop=True)
         return self
 
-    def get_dataset(self, project_root):
+    def get_dataset(self, project_root, split=False):
         """
         Legge fisicamente i file JSON dal disco e divide i dati in
         set di Addestramento (train), Validazione (val) e Test.
@@ -103,23 +103,26 @@ class BeliefBankDataset(Dataset):
         calibration_splits = calibration_facts.get_splits()
 
         # Raggruppa tutto in un grosso dizionario formattando le liste tramite TorchDataset
-        train_constraints = TorchDataset(
-            constraints.get_grounded_constraints(facts=calibration_splits["train"], path=constraints_path))
+        train_constraints = TorchDataset(constraints.get_grounded_constraints(facts=calibration_splits["train"], path=constraints_path))
         train_calibration_facts = TorchDataset(calibration_splits["train"])
         train_silver_facts = TorchDataset(silver_splits["train"])
 
-        val_constraints = TorchDataset(
-            constraints.get_grounded_constraints(facts=calibration_splits["val"], path=constraints_path))
+        val_constraints = TorchDataset(constraints.get_grounded_constraints(facts=calibration_splits["val"], path=constraints_path))
         val_calibration_facts = TorchDataset(calibration_splits["val"])
 
         test_calibration_facts = TorchDataset(calibration_splits["test"])
         test_silver_facts = TorchDataset(silver_splits["test"])
 
+
+
         return {
             "constraints": {
                 "train": train_constraints,
-                "all": constraints,
-            },
+                "all": TorchDataset(constraints.get_grounded_constraints(facts=calibration_facts.get_whole_set(), path=constraints_path)),
+            },""" #todo: aggiungere
+            "multihop": {
+                "complete": TorchDataset(),
+            },"""
             "facts": {
                 "calibration": {
                     "train": train_calibration_facts,
@@ -163,7 +166,7 @@ class BeliefBankDataset(Dataset):
         """
         dataset = []
 
-        for row in self.all_data["constraints"]["train"].data:
+        for row in self.all_data["constraints"]["all"].data:
             # Crea la stringa per l'implicazione positiva
             fact, belief = BeliefBankDataset.get_implication(row)
             dataset.append({"fact": fact, "belief": int(belief)})
@@ -432,7 +435,7 @@ class Facts():
     @staticmethod
     def noun_fluenterer(noun, uncountables, relation=None):
         """
-        Funzione grammaticale geniale che applica gli articoli ai nomi in inglese.
+        Funzione grammaticale che applica gli articoli ai nomi in inglese.
         1. Se la parola è non numerabile (es. "water"), non aggiunge articoli.
         2. Se la relazione indica un'azione o proprietà astratta, non aggiunge articoli.
         3. Se inizia per vocale aggiunge "an ".

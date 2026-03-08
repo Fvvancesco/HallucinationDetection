@@ -115,8 +115,7 @@ class HallucinationDetection:
                 "label": label
             })
 
-        path_to_save = os.path.join(result_path, self.dataset_name, target,
-                                    self.PREDICTIONS_FILE_NAME.format(layer=self.kc_layer))
+        path_to_save = os.path.join(result_path, self.dataset_name, target, self.PREDICTIONS_FILE_NAME.format(layer=self.kc_layer))
         os.makedirs(os.path.dirname(path_to_save), exist_ok=True)
 
         if os.path.exists(path_to_save):
@@ -129,8 +128,7 @@ class HallucinationDetection:
 
     def eval(self, target, llm_name, data_name=DEFAULT_DATASET):
         result_path = os.path.join(self.project_dir, self.PREDICTION_DIR, llm_name)
-        preds_path = os.path.join(result_path, data_name, target,
-                                  self.PREDICTIONS_FILE_NAME.format(layer=self.kc_layer))
+        preds_path = os.path.join(result_path, data_name, target, self.PREDICTIONS_FILE_NAME.format(layer=self.kc_layer))
 
         if not os.path.exists(preds_path):
             raise FileNotFoundError(f"Predictions file not found: {preds_path}")
@@ -168,7 +166,7 @@ class HallucinationDetection:
 
                 generated_ids = output.sequences[0][tokens["input_ids"].shape[1]:]
                 """
-                generated_text = self.tokenizer.decode(generated_ids, skip_special_tokens=True)
+                generated_text = self.tokenizer.decode(generated_ids, skip_special_tokens=True) #si fa prima passare alla cpu per evitare bug di decoding, un po' più lento però
                 """
                 generated_ids_list = generated_ids.cpu().tolist() if hasattr(generated_ids, "cpu") else list(generated_ids)
                 generated_text = self.tokenizer.decode(generated_ids_list, skip_special_tokens=True).strip()
@@ -178,7 +176,8 @@ class HallucinationDetection:
                     logits = torch.stack(output.scores, dim=1)
                     ut.save_model_logits(logits, instance_id, self.logits_save_dir)
 
-            self._save_tensors_to_disk(inspect.catcher, instance_id, is_attribution=False)
+            #self._save_tensors_to_disk(inspect.catcher, instance_id, is_attribution=False)
+            self._save_tensors_to_disk(inspect.catcher, instance_id, is_attribution=True, save_last=False)
 
         self.combine_activations()
 
@@ -208,6 +207,7 @@ class HallucinationDetection:
                 output = self.llm.generate(
                     input_ids=tokens["input_ids"],
                     max_new_tokens=self.MAX_NEW_TOKENS,
+                    max_length=None, #
                     attention_mask=attention_mask,
                     do_sample=False,
                     temperature=0.,
@@ -329,6 +329,55 @@ class HallucinationDetection:
 
             # Pass directories dict explicitly for attributions
             self._save_tensors_to_disk(inspect.catcher, instance_id, is_attribution=True, target_dirs=attr_dirs)
+    """
+    def save_attributions_and_grads_chunking(self, chunk_size=1000):
+        print("--" * 25 + " Saving Attributions (Act x Grad) " + "--" * 25)
+        torch.set_grad_enabled(True)
+        self.llm.eval()
+        for param in self.llm.parameters():
+            param.requires_grad = False
+
+        module_names = self._get_target_modules()
+
+        # 1. Spostiamo la tokenizzazione fuori dal ciclo!
+        pos_token = self.tokenizer.encode(" TRUE", add_special_tokens=False)[-1]
+        neg_token = self.tokenizer.encode(" FALSE", add_special_tokens=False)[-1]
+
+        # 2. Inizializziamo il buffer in RAM per le attribuzioni
+        self._init_buffers()
+        chunk_idx = 0
+
+        for idx in tqdm(range(len(self.dataset)), desc="Computing attributions"):
+            fact, fact_label, instance_id = self.dataset[idx]
+
+            _, tokens = self._prepare_inputs(fact, use_chat_template=True)
+
+            with InspectOutputContext(self.llm, module_names, track_grads=True) as inspect:
+                outputs = self.llm(
+                    input_ids=tokens["input_ids"],
+                    attention_mask=tokens.get("attention_mask")
+                )
+
+                logits = outputs.logits
+                last_token_logits = logits[0, -1, :]
+                metric = last_token_logits[pos_token] - last_token_logits[neg_token]
+
+                self.llm.zero_grad()
+                metric.backward()
+
+            # 3. Accodiamo in RAM usando un nuovo metodo dedicato (Act x Grad)
+            self._bufferize_attributions(inspect.catcher, instance_id)
+
+            # --- LOGICA DI CHUNKING ---
+            if (idx + 1) % chunk_size == 0:
+                # Nota: passiamo 'attributions' come prefisso per salvare nelle cartelle giuste
+                self._flush_buffer_to_disk(chunk_idx, prefix="attributions")
+                chunk_idx += 1
+                self._init_buffers()
+
+        # Salvataggio finale per il blocco parziale rimanente
+        if len(self.instance_ids_buffer[self.TARGET_LAYERS[0]]) > 0:
+            self._flush_buffer_to_disk(chunk_idx, prefix="attributions")"""
 
     # -------------
     # Helpers & Utilities
@@ -367,18 +416,27 @@ class HallucinationDetection:
         modules += [f'model.layers.{idx}.mlp' for idx in self.TARGET_LAYERS]
         return modules
 
-    def _save_tensors_to_disk(self, catcher, instance_id, is_attribution=False, target_dirs=None):
+    def _save_tensors_to_disk(self, catcher, instance_id, is_attribution=False, target_dirs=None, save_last=True):
         """Salva i tensori estratti dalle callback su disco."""
         for module, tensor in catcher.items():
             if tensor is None or (is_attribution and getattr(tensor, 'grad', None) is None):
                 continue
 
-            if is_attribution:
-                act_last = tensor[0, -1].detach().float()
-                grad_last = tensor.grad[0, -1].detach().float()
-                tensor_to_save = act_last * grad_last
+            if save_last:
+                if is_attribution:
+                    act_last = tensor[0, -1].detach().float()
+                    grad_last = tensor.grad[0, -1].detach().float()
+                    tensor_to_save = act_last * grad_last
+                else:
+                    tensor_to_save = tensor[0, -1].detach().float()
             else:
-                tensor_to_save = tensor[0, -1].detach().float()
+                if is_attribution:
+                    # Usiamo ':' invece di '-1' per prendere TUTTI i token della sequenza
+                    act_all = tensor[0, :].detach().float()
+                    grad_all = tensor.grad[0, :].detach().float()
+                    tensor_to_save = act_all * grad_all
+                else:
+                    tensor_to_save = tensor[0, -1].detach().float()
 
             tensor_to_save = tensor_to_save.cpu()
             layer_idx = int(module.split(".")[2])
