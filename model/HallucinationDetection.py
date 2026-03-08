@@ -328,7 +328,7 @@ class HallucinationDetection:
                 metric.backward()
 
             # Pass directories dict explicitly for attributions
-            self._save_tensors_to_disk(inspect.catcher, instance_id, is_attribution=True, target_dirs=attr_dirs)
+            self._save_tensors_to_disk(inspect.catcher, instance_id, is_attribution=True, target_dirs=attr_dirs, save_last=False)
     """
     def save_attributions_and_grads_chunking(self, chunk_size=1000):
         print("--" * 25 + " Saving Attributions (Act x Grad) " + "--" * 25)
