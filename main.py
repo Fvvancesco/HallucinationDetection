@@ -93,6 +93,25 @@ def test_extraction(args):
     print("\n✅ Estrazione completata con successo!")
     print(f"📁 Controlla la cartella '{detector.CACHE_DIR_NAME}' per vedere i tensori salvati.")
 
+def test_attribution(args):
+    """Testa la pipeline di caricamento modello ed estrazione delle attivazioni."""
+    setup_huggingface_login()
+
+    print("\n" + "-" * 50 + " Hallucination Detection Test " + "-" * 50)
+    print(f"🖥️ Cuda disponibile (utilizzo la GPU): {torch.cuda.is_available()}")
+
+    detector = HallucinationDetection(project_dir=PROJECT_DIR)
+
+    # 3. Setup Cartelle e Generazione
+    detector._create_folders_if_not_exists(label=args.label)
+
+    print("\n🧠 Inizio calcolo e salvataggio attribuzioni...")
+    # Qui usiamo la logica di estrazione. (Usa il chunk_size se hai implementato l'ultima versione di cui parlavamo)
+    detector.save_attributions_and_grads()
+
+    print("\n✅ Attribuzioni calcolate con successo!")
+    print(f"📁 Controlla la cartella '{detector.CACHE_DIR_NAME}' per vedere le attribuzioni.")
+
 
 def run_full_pipeline(args):
     """Esegue l'intero ciclo di predizione LLM e probing KC (dal codice commentato originale)."""
@@ -160,6 +179,8 @@ def main():
         test_dataset(args)
     elif args.mode == "test_extraction":
         test_extraction(args)
+    elif args.mode == "test_attribution":
+        test_attribution(args)
     elif args.mode == "full_pipeline":
         run_full_pipeline(args)
     else:

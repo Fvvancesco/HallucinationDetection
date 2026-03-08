@@ -322,7 +322,7 @@ class HallucinationDetection:
 
                 logits = outputs.logits
                 last_token_logits = logits[0, -1, :]
-                metric = last_token_logits[pos_token] - last_token_logits[neg_token]
+                metric = last_token_logits[pos_token] - last_token_logits[neg_token] #metrica differenza dei logit
 
                 self.llm.zero_grad()
                 metric.backward()
