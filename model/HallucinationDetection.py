@@ -49,7 +49,7 @@ class HallucinationDetection:
             self.dataset_name = "beliefbank"
             self.dataset = BeliefBankDataset(
                 project_root=self.project_dir,
-                data_type="facts",
+                data_type="constraints",
                 label=label,
                 shuffle=False
             )
@@ -156,6 +156,7 @@ class HallucinationDetection:
                 output = self.llm.generate(
                     input_ids=tokens["input_ids"],
                     max_new_tokens=self.MAX_NEW_TOKENS,
+                    max_length=None,
                     attention_mask=attention_mask,
                     do_sample=False,
                     temperature=0.,
