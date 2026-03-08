@@ -177,7 +177,7 @@ class HallucinationDetection:
                     ut.save_model_logits(logits, instance_id, self.logits_save_dir)
 
             #self._save_tensors_to_disk(inspect.catcher, instance_id, is_attribution=False)
-            self._save_tensors_to_disk(inspect.catcher, instance_id, is_attribution=True, save_last=False)
+            self._save_tensors_to_disk(inspect.catcher, instance_id, is_attribution=False, save_last=False)
 
         self.combine_activations()
 
