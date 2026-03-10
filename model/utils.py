@@ -187,7 +187,7 @@ def parse_layer_id_and_instance_id(s):
         print(s)
     return layer_idx, instance_idx
 
-
+"""
 def load_activations(
         model_name="meta-llama/Meta-Llama-3-8B",
         data_name="demo",
@@ -204,3 +204,28 @@ def load_activations(
 
     return torch.load(act_dir, map_location="cuda"), instance_ids
 
+"""
+
+
+def load_activations(
+        model_name="meta-llama/Meta-Llama-3-8B",
+        data_name="demo",
+        analyse_activation="hidden",
+        layer_idx=None,
+        results_dir="cache_data",
+):
+    model_name = model_name.split("/")[-1]
+
+    # Rimosso 'activation_type' dal path per allinearlo a combine_activations
+    base_dir = os.path.join(results_dir, model_name, data_name, f"activation_{analyse_activation}")
+
+    act_path = os.path.join(base_dir, f"layer{layer_idx}_activations.pt")
+    ids_path = os.path.join(base_dir, f"layer{layer_idx}_instance_ids.json")
+
+    if not os.path.exists(act_path) or not os.path.exists(ids_path):
+        raise FileNotFoundError(f"File mancanti per il layer {layer_idx} in {base_dir}")
+
+    instance_ids = json.load(open(ids_path, "r"))
+    activations = torch.load(act_path, map_location="cuda")
+
+    return activations, instance_ids

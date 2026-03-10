@@ -7,7 +7,11 @@ from tqdm import tqdm
 import model.utils as ut
 from logical_datasets.BeliefBankDataset import BeliefBankDataset
 from model.InspectOutputContext import InspectOutputContext
-from prober.KCProbing import KCProbing
+from prober.LinearProber import LinearProber
+
+from sklearn.model_selection import train_test_split
+import matplotlib.pyplot as plt
+import seaborn as sns
 
 # -------------
 # Prompts Globali
@@ -70,10 +74,10 @@ class HallucinationDetection:
         )
         self.device = self.llm.device  # Aggiorna il device basato su dove è stato caricato il modello
 
-    def load_kc_probing(self, activation, layer):
-        print("--" * 25 + f" Loading KC probing for layer {layer} ({activation}) " + "--" * 25)
-        self.kc_layer = layer
-        self.kc_model = KCProbing(self.project_dir, activation=activation, layer=layer)
+    def load_linear_prober(self, activation, layer):
+        print("--" * 25 + f" Loading Linear Prober for layer {layer} ({activation}) " + "--" * 25)
+        self.prober_layer = layer
+        self.prober_model = LinearProber(self.project_dir, activation=activation, layer=layer)
 
     # -------------
     # Main Methods
@@ -92,8 +96,8 @@ class HallucinationDetection:
         self.save_activations(use_chat_template=use_chat_template)
 
     @torch.no_grad()
-    def predict_kc(self, target, layer, llm_name, data_name=DEFAULT_DATASET, use_local=False, label=1):
-        self.load_kc_probing(target, layer)
+    def predict_prober(self, target, layer, llm_name, data_name=DEFAULT_DATASET, use_local=False, label=1):
+        self.load_linear_prober(target, layer)
         self.load_dataset(dataset_name=data_name, use_local=use_local, label=label)
 
         result_path = os.path.join(self.project_dir, self.PREDICTION_DIR, llm_name)
@@ -101,8 +105,8 @@ class HallucinationDetection:
             model_name=llm_name,
             data_name=self.dataset_name,
             analyse_activation=target,
-            activation_type=self.LABELS[label],
-            layer_idx=self.kc_layer,
+            #activation_type=self.LABELS[label],
+            layer_idx=self.prober_layer,
             results_dir=os.path.join(self.project_dir, self.CACHE_DIR_NAME)
         )
 
@@ -111,11 +115,11 @@ class HallucinationDetection:
             preds.append({
                 "instance_id": instance_id,
                 "lang": self.dataset.get_language_by_instance_id(instance_id),
-                "prediction": self.kc_model.predict(activation).item(),
+                "prediction": self.prober_model.predict(activation).item(),
                 "label": label
             })
 
-        path_to_save = os.path.join(result_path, self.dataset_name, target, self.PREDICTIONS_FILE_NAME.format(layer=self.kc_layer))
+        path_to_save = os.path.join(result_path, self.dataset_name, target, self.PREDICTIONS_FILE_NAME.format(layer=self.prober_layer))
         os.makedirs(os.path.dirname(path_to_save), exist_ok=True)
 
         if os.path.exists(path_to_save):
@@ -128,7 +132,7 @@ class HallucinationDetection:
 
     def eval(self, target, llm_name, data_name=DEFAULT_DATASET):
         result_path = os.path.join(self.project_dir, self.PREDICTION_DIR, llm_name)
-        preds_path = os.path.join(result_path, data_name, target, self.PREDICTIONS_FILE_NAME.format(layer=self.kc_layer))
+        preds_path = os.path.join(result_path, data_name, target, self.PREDICTIONS_FILE_NAME.format(layer=self.prober_layer))
 
         if not os.path.exists(preds_path):
             raise FileNotFoundError(f"Predictions file not found: {preds_path}")
@@ -287,6 +291,58 @@ class HallucinationDetection:
                         json.dump(self.instance_ids_buffer[layer_idx], f, indent=4)
 
         print(f"Chunk {chunk_idx} saved successfully!")
+
+    def save_activations_pure_forward(self, use_chat_template=True):
+        """
+        Versione corretta dell'estrazione senza Data Leakage:
+        1. Genera il testo per salvare i logit e la risposta testuale.
+        2. Fa una passata in avanti (forward) SOLO sul prompt per catturare lo stato interno PRIMA della risposta.
+        """
+        module_names = self._get_target_modules()
+
+        for idx in tqdm(range(len(self.dataset)), desc="Saving pure activations"):
+            fact, fact_label, instance_id = self.dataset[idx]
+
+            # Preparazione del prompt (es: "Is the following statement true: A dog is a mammal?")
+            formatted_prompt, tokens = self._prepare_inputs(fact, use_chat_template)
+            attention_mask = tokens.get("attention_mask")
+
+            # --- FASE 1: GENERAZIONE NORMALE ---
+            # Lasciamo che il modello risponda liberamente (es: "TRUE") per salvare logit e testo
+            output = self.llm.generate(
+                input_ids=tokens["input_ids"],
+                max_new_tokens=self.MAX_NEW_TOKENS,
+                max_length=None,
+                attention_mask=attention_mask,
+                do_sample=False,
+                temperature=0.,
+                pad_token_id=self.tokenizer.eos_token_id,
+                return_dict_in_generate=True,
+                output_scores=True
+            )
+
+            generated_ids_list = output.sequences[0][tokens["input_ids"].shape[1]:].cpu().tolist() if hasattr(
+                output.sequences[0], "cpu") else list(output.sequences[0][tokens["input_ids"].shape[1]:])
+            generated_text = self.tokenizer.decode(generated_ids_list, skip_special_tokens=True).strip()
+            ut.save_generation_output(generated_text, formatted_prompt, instance_id, self.generation_save_dir)
+
+            if hasattr(output, 'scores') and output.scores:
+                logits = torch.stack(output.scores, dim=1)
+                ut.save_model_logits(logits, instance_id, self.logits_save_dir)
+
+            # --- FASE 2: ESTRAZIONE PURA DELLE ATTIVAZIONI ---
+            # Catturiamo lo stato interno passando in input SOLO il prompt originale
+            with InspectOutputContext(self.llm, module_names) as inspect:
+                _ = self.llm(
+                    input_ids=tokens["input_ids"],
+                    attention_mask=attention_mask
+                )
+
+            # Salviamo su disco le attivazioni appena catturate, relative all'ultimo token del prompt
+            self._save_tensors_to_disk(inspect.catcher, instance_id, is_attribution=False, save_last=False)
+
+        # Combina tutti i singoli file in grossi tensori
+        self.combine_activations()
 
     def save_attributions_and_grads(self):
         print("--" * 25 + " Saving Attributions (Act x Grad) " + "--" * 25)
@@ -562,7 +618,7 @@ class HallucinationDetection:
 
     def _save_metrics(self, metrics, target, data_name, llm_name):
         metrics_path = os.path.join(self.project_dir, self.RESULTS_DIR, llm_name, data_name, target,
-                                    f"metrics_layer{self.kc_layer}.json")
+                                    f"metrics_layer{self.prober_layer}.json")
 
         if not os.path.exists(os.path.dirname(metrics_path)):
             os.makedirs(os.path.dirname(metrics_path))
@@ -574,3 +630,73 @@ class HallucinationDetection:
         json.dump(metrics, open(metrics_path, "w"), indent=4)
 
         print(f"\t -> Metrics saved to {metrics_path}")
+
+    def train_and_evaluate_probers(self, llm_name, data_name=DEFAULT_DATASET, test_size=0.2, epochs=30):
+        print("\n" + "=" * 50)
+        print("🛠️ Avvio Addestramento Probers su tutti i Layer")
+        print("=" * 50)
+
+        # 1. Carichiamo tutto il dataset per avere la mappa id -> label
+        # (Assumiamo che passandogli None o non filtrando, ci dia tutti gli elementi)
+        self.dataset = BeliefBankDataset(project_root=self.project_dir, data_type="constraints", shuffle=False)
+        id_to_label = {instance_id: fact_label for fact, fact_label, instance_id in self.dataset}
+
+        llm_short_name = llm_name.split("/")[-1]
+        results_dir = os.path.join(self.project_dir, self.CACHE_DIR_NAME)
+        metrics_results = []
+
+        for target in self.ACTIVATION_TARGET:
+            print(f"\n--- Training su {target.upper()} ---")
+            for layer in self.TARGET_LAYERS:
+                act_path = os.path.join(results_dir, llm_short_name, data_name, f"activation_{target}",
+                                        f"layer{layer}_activations.pt")
+                ids_path = os.path.join(results_dir, llm_short_name, data_name, f"activation_{target}",
+                                        f"layer{layer}_instance_ids.json")
+
+                if not os.path.exists(act_path) or not os.path.exists(ids_path):
+                    print(f"⚠️ Layer {layer}: file mancanti, salto...")
+                    continue
+
+                # 2. Caricamento dati
+                activations = torch.load(act_path, map_location="cuda")
+                instance_ids = json.load(open(ids_path, "r"))
+
+                # 3. Match delle label
+                #labels = [id_to_label[i] for i in instance_ids]
+                #labels = torch.tensor(labels, dtype=torch.float32).cuda()
+                labels_numeric = [1.0 if id_to_label[i] == "yes" else 0.0 for i in instance_ids]
+                labels = torch.tensor(labels_numeric, dtype=torch.float32).cuda()
+
+                # 4. Split Train/Test
+                X_train, X_test, y_train, y_test = train_test_split(
+                    activations, labels, test_size=test_size, random_state=42, stratify=labels.cpu()
+                )
+
+                # 5. Training
+                input_dim = activations.shape[1]
+                prober = LinearProber(self.project_dir, activation=target, layer=layer, load_pretrained=False,
+                                      input_dim=input_dim)
+
+                acc = prober.train(X_train, y_train, X_test, y_test, epochs=epochs)
+                prober.save_model()
+
+                metrics_results.append({"target": target, "layer": layer, "accuracy": acc})
+                print(f"Layer {layer:02d} | Accuracy: {acc:.4f}")
+
+        # 6. Salvataggio e Plot finale
+        df_metrics = pd.DataFrame(metrics_results)
+        df_metrics.to_csv(os.path.join(self.project_dir, self.RESULTS_DIR, "prober_training_results.csv"), index=False)
+
+        plt.figure(figsize=(12, 6))
+        sns.lineplot(data=df_metrics, x='layer', y='accuracy', hue='target', marker='o')
+        plt.title('Prober Validation Accuracy per Layer e Tipo di Attivazione')
+        plt.xlabel('Layer Number')
+        plt.ylabel('Accuracy')
+        plt.grid(True)
+        plt.legend(title='Activation Type')
+
+        plot_path = os.path.join(self.project_dir, self.RESULTS_DIR, "prober_accuracy_profile.png")
+        os.makedirs(os.path.dirname(plot_path), exist_ok=True)
+        plt.savefig(plot_path)
+        print(f"\n✅ Training completato! Profilo salvato in: {plot_path}")
+        plt.show()

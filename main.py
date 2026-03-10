@@ -8,6 +8,7 @@ from attributions.analysis import AttributionAnalyzer
 from logical_datasets.BeliefBankDataset import BeliefBankDataset
 from model.HallucinationDetection import HallucinationDetection
 
+
 # Configurazione cartelle dinamica
 PROJECT_DIR = os.path.dirname(os.path.abspath(__file__))
 
@@ -129,15 +130,51 @@ def test_attribution(args):
     print("\n✅ Attribuzioni calcolate con successo!")
     print(f"📁 Controlla la cartella '{detector.CACHE_DIR_NAME}' per vedere le attribuzioni.")
 
+def run_probing_only(args):
+        """Esegue solo la fase di probing su attivazioni già estratte."""
+        detector = HallucinationDetection(project_dir=PROJECT_DIR)
+        llm_short_name = args.model_name.split("/")[-1]
+
+        targets = ["hidden", "mlp", "attn"]
+        layers = list(range(0, 32))
+
+        print(f"\n🚀 Avvio Probing per il modello: {llm_short_name}")
+
+        detector.load_dataset(dataset_name=args.data_name, label=args.label)
+
+        for target in targets:
+            print(f"\n--- Analisi Target: {target} ---")
+            for layer in layers:
+                try:
+                    detector.predict_prober(
+                        target=target,
+                        layer=layer,
+                        llm_name=llm_short_name,
+                        label=args.label
+                    )
+                except FileNotFoundError:
+                    print(f"⚠️ Modello di prober non trovato per layer {layer}, salto...")
+                except Exception as e:
+                    print(f"❌ Errore al layer {layer}: {e}")
+
+def run_train_probers(args):
+    detector = HallucinationDetection(project_dir=PROJECT_DIR)
+    detector.train_and_evaluate_probers(
+        llm_name=args.model_name,
+        data_name=args.data_name,
+        test_size=0.2,
+        epochs=30 # Puoi esporlo ad argparse se vuoi
+    )
+
 
 def run_full_pipeline(args):
-    """Esegue l'intero ciclo di predizione LLM e probing KC (dal codice commentato originale)."""
+    """Esegue l'intero ciclo di predizione LLM e probing Lineare."""
     setup_huggingface_login()
 
-    hallucination_detector = HallucinationDetection(project_dir=PROJECT_DIR)
+    detector = HallucinationDetection(project_dir=PROJECT_DIR)
     llm_name = args.model_name.split("/")[-1]
 
-    for label, desc in hallucination_detector.LABELS.items():
+    for label, desc in detector.LABELS.items():
         if args.data_name == "beliefbank" and label == 0:
             continue
 
@@ -145,33 +182,34 @@ def run_full_pipeline(args):
         print(f"Predicting {desc} instances (Label: {label})")
         print("==" * 25)
 
-        # Estrazione LLM
-        hallucination_detector.predict_llm(
+        detector.predict_llm(
             llm_name=args.model_name,
             use_local=args.use_local,
             data_name=args.data_name,
             label=label
         )
-        """ da implementare
-        # Probing
-        for activation in hallucination_detector.ACTIVATION_TARGET:
-            for layer in hallucination_detector.TARGET_LAYERS:
-                hallucination_detector.predict_kc(
-                    target=activation,
-                    layer=layer,
-                    data_name=args.data_name,
-                    use_local=args.use_local,
-                    label=label,
-                    llm_name=llm_name
-                )
-        """
+
+        # Probing post-estrazione
+        for target in detector.ACTIVATION_TARGET:
+            for layer in detector.TARGET_LAYERS:
+                try:
+                    detector.predict_prober(
+                        target=target,
+                        layer=layer,
+                        data_name=args.data_name,
+                        use_local=args.use_local,
+                        label=label,
+                        llm_name=llm_name
+                    )
+                except Exception as e:
+                    print(f"Errore al layer {layer} con target {target}: {e}")
 
 
 def main():
     parser = argparse.ArgumentParser(description="Toolkit per Test ed Estrazione Hallucination Detection")
 
     parser.add_argument("--mode", type=str, required=True,
-                        choices=["test_dataset", "test_extraction", "test_attribution", "full_pipeline", "analyze"],
+                        choices=["test_dataset", "test_extraction", "test_attribution", "full_pipeline", "analyze", "train_probers", "probing"],
                         help="Scegli quale test o pipeline eseguire.")
 
     # Aggiungi questo parametro per l'analizzatore
@@ -200,6 +238,10 @@ def main():
         test_extraction(args)
     elif args.mode == "test_attribution":
         test_attribution(args)
+    elif args.mode == "probing":
+        run_probing_only(args)
+    elif args.mode == "train_probers":
+        run_train_probers(args)
     elif args.mode == "analyze":
         print("\n🔍 Avvio Analizzatore di Attribuzioni...")
         analyzer = AttributionAnalyzer(PROJECT_DIR, args.model_name, data_name=args.data_name, label=args.label)
@@ -207,11 +249,20 @@ def main():
         # 1. Dove si trova la conoscenza logica?
         analyzer.plot_layer_profile(args.instance_id)
 
-        # 2. Quando (su quale parola) il layer 20 si è "svegliato"?
-        analyzer.plot_word_heatmap(args.instance_id, module="mlp", layer=20)
+        #analyzer.plot_word_heatmap(args.instance_id)
+        #analyzer.plot_word_barh(args.instance_id)
+
+        for i in range(32):
+            # 2. Quando (su quale parola) il layer 20 si è "svegliato"?
+            analyzer.plot_word_barh(args.instance_id, module="attn", layer=i)
+            analyzer.plot_word_heatmap(args.instance_id, module="attn", layer=i)
+            analyzer.plot_text_saliency(args.instance_id, module="hidden", layer=i)
 
         # 3. Chi (quali canali) ha spinto la decisione finale nell'ultimo strato?
-        analyzer.hunt_top_dimensions(args.instance_id, module="hidden", layer=31, top_k=5)
+        for i in range(32):
+            analyzer.hunt_top_dimensions(args.instance_id, module="attn", layer=i, top_k=5)
+            analyzer.hunt_top_dimensions(args.instance_id, module="mlp", layer=i, top_k=5)
+            analyzer.hunt_top_dimensions(args.instance_id, module="hidden", layer=i, top_k=5)
     elif args.mode == "full_pipeline":
         run_full_pipeline(args)
     else:

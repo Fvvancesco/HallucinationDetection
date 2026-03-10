@@ -48,7 +48,7 @@ class AttributionAnalyzer:
 
         fact = row.iloc[0]['fact']
 
-        # Ricostruisce lo stesso identico prompt usato in HallucinationDetection
+        # Ricostruisce lo stesso identico prompt usato in HallucinationDetection, caricalo da un posto unificato...
         system_prompt = "You are a helpful assistant. Answer truthfully with only one word: TRUE or FALSE."
         user_prompt = f"Is the following statement true: {fact}?"
         messages = ut.build_messages(system_prompt=system_prompt, user_prompt=user_prompt, k=0)
@@ -160,6 +160,65 @@ class AttributionAnalyzer:
         print("\n🟥 TOP DETRATTORI (Spingono verso la Falsità / FALSE):")
         for rank, (dim_idx, score) in enumerate(top_negativi, 1):
             print(f"  {rank}. Dimensione {dim_idx:04d} --> Forza: {score:.4f}")
+
+    def plot_word_barh(self, instance_id: int, module: str = "mlp", layer: int = 20):
+        """Genera un grafico a barre orizzontali per una leggibilità superiore dei token."""
+        fact, tokens = self._get_tokens_from_instance(instance_id)
+        tensor = self._get_tensor(module, layer, instance_id)
+
+        # Somma l'importanza per parola (come nella tua versione precedente)
+        importanza = torch.abs(tensor).sum(dim=1).numpy()
+
+        # Invertiamo l'ordine per leggere la frase dall'alto verso il basso
+        df = pd.DataFrame({'Token': tokens, 'Importanza': importanza}).iloc[::-1]
+
+        plt.figure(figsize=(10, len(tokens) * 0.35))  # Altezza dinamica in base alla frase
+        plt.barh(df.index, df['Importanza'], color='skyblue', edgecolor='black')
+        plt.yticks(df.index, df['Token'], fontsize=11)
+        plt.title(f"Attribuzione Token (Orizzontale) - Layer {layer}\nFatto: {fact}", fontsize=13)
+        plt.xlabel("Energia Attribuzione", fontsize=11)
+        plt.grid(axis='x', alpha=0.3)
+        plt.tight_layout()
+        plt.show()
+
+    def plot_text_saliency(self, instance_id: int, module: str = "mlp", layer: int = 20):
+        """Visualizza il prompt colorando le parole in base alla loro importanza (Saliency Map)."""
+        import matplotlib.colors as mcolors
+
+        fact, tokens = self._get_tokens_from_instance(instance_id)
+        tensor = self._get_tensor(module, layer, instance_id)
+        importanza = torch.abs(tensor).sum(dim=1).numpy()
+
+        # Normalizzazione dei valori tra 0 e 1 per la scala di colori
+        norm = mcolors.Normalize(vmin=importanza.min(), vmax=importanza.max())
+        cmap = plt.get_cmap('Reds')  # Usiamo il rosso per l'importanza
+
+        fig, ax = plt.subplots(figsize=(12, 2))
+        ax.axis('off')
+
+        # Rendering del testo colorato
+        x_pos = 0
+        y_pos = 0.5
+        for i, token in enumerate(tokens):
+            color = cmap(norm(importanza[i]))
+            # Disegna un rettangolo colorato dietro il testo
+            txt = ax.text(x_pos, y_pos, f" {token} ", fontsize=12, fontweight='bold',
+                          bbox=dict(facecolor=color, edgecolor='none', boxstyle='round,pad=0.3'),
+                          transform=ax.transData)
+
+            # Calcola la posizione per il token successivo (approssimativa)
+            plt.draw()  # Necessario per calcolare le dimensioni del testo
+            inv = ax.transData.inverted()
+            bbox = txt.get_window_extent().transformed(inv)
+            x_pos += bbox.width + 0.01
+
+            # Vai a capo se la riga è troppo lunga
+            if x_pos > 0.9:
+                x_pos = 0
+                y_pos -= 0.2
+
+        plt.title(f"Saliency Map (Layer {layer} - {module.upper()})", fontsize=14, pad=20)
+        plt.show()
 
 
 # Esempio di utilizzo se eseguito come script indipendente
