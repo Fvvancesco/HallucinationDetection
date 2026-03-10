@@ -95,6 +95,41 @@ def test_extraction(args):
     print("\n✅ Estrazione completata con successo!")
     print(f"📁 Controlla la cartella '{detector.CACHE_DIR_NAME}' per vedere i tensori salvati.")
 
+def test_extraction_probers(args):
+    """Testa la pipeline di caricamento modello ed estrazione delle attivazioni."""
+    setup_huggingface_login()
+
+    print("\n" + "-" * 50 + " Hallucination Detection Test " + "-" * 50)
+    print(f"🖥️ Cuda disponibile (utilizzo la GPU): {torch.cuda.is_available()}")
+
+    detector = HallucinationDetection(project_dir=PROJECT_DIR)
+
+    # 1. Caricamento Dataset
+    detector.load_dataset(dataset_name=args.data_name, label=args.label)
+
+    # Limitiamo il dataset se richiesto per un test veloce
+    if args.test_size > 0:
+        detector.dataset.get_sample(max_samples=args.test_size)
+        print(f"\n✂️ Dataset limitato a {len(detector.dataset)} elementi per il test rapido.\n")
+
+    # 2. Caricamento Modello
+    detector.load_llm(
+        llm_name=args.model_name,
+        use_local=args.use_local,
+        dtype=torch.bfloat16,
+        use_device_map=True
+    )
+
+    # 3. Setup Cartelle e Generazione
+    detector._create_folders_if_not_exists(label=args.label)
+
+    print("\n🧠 Inizio generazione e salvataggio attivazioni...")
+    # Qui usiamo la logica di estrazione. (Usa il chunk_size se hai implementato l'ultima versione di cui parlavamo)
+    detector.save_activations_pure_forward(use_chat_template=True)
+
+    print("\n✅ Estrazione completata con successo!")
+    print(f"📁 Controlla la cartella '{detector.CACHE_DIR_NAME}' per vedere i tensori salvati.")
+
 def test_attribution(args):
     """Testa la pipeline di caricamento modello ed estrazione delle attivazioni."""
     setup_huggingface_login()
@@ -209,7 +244,7 @@ def main():
     parser = argparse.ArgumentParser(description="Toolkit per Test ed Estrazione Hallucination Detection")
 
     parser.add_argument("--mode", type=str, required=True,
-                        choices=["test_dataset", "test_extraction", "test_attribution", "full_pipeline", "analyze", "train_probers", "probing"],
+                        choices=["test_dataset", "test_extraction", "test_extraction_for_probers", "test_attribution", "full_pipeline", "analyze", "train_probers", "probing"],
                         help="Scegli quale test o pipeline eseguire.")
 
     # Aggiungi questo parametro per l'analizzatore
@@ -236,6 +271,8 @@ def main():
         test_dataset(args)
     elif args.mode == "test_extraction":
         test_extraction(args)
+    elif args.mode == "test_extraction_for_probers":
+        test_extraction_probers(args)
     elif args.mode == "test_attribution":
         test_attribution(args)
     elif args.mode == "probing":
