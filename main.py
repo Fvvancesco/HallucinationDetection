@@ -37,7 +37,8 @@ def setup_huggingface_login() -> None:
 
 def setup_pipeline(args: argparse.Namespace, require_llm: bool = True) -> HallucinationDetection:
     """Utility centralizzata per inizializzare il workflow ed evitare duplicazioni di codice."""
-    setup_huggingface_login()
+    if require_llm:
+        setup_huggingface_login()
     logger.info("-" * 40 + " Hallucination Detection Pipeline " + "-" * 40)
     logger.info(f"🖥️ Cuda disponibile: {torch.cuda.is_available()}")
 
@@ -65,24 +66,34 @@ def test_dataset(args: argparse.Namespace) -> None:
     logger.info(f"🛠️ Inizializzazione del dataset da: {PROJECT_DIR}")
 
     try:
-        dataset = BeliefBankDataset(
-            project_root=PROJECT_DIR,
-            recreate_ids=True,
-            data_type=args.data_type,
-            label=args.label,
-            shuffle=True
-        )
+        if args.data_name == "entailmentbank":
+            from logical_datasets.EntailmentBankDataset import EntailmentBankDataset
+            dataset = EntailmentBankDataset(
+                project_root=PROJECT_DIR,
+                label=args.label if args.label in [0, 1] else "all",  # Se si vuole testare entrambi
+                shuffle=True
+            )
+        else:
+            dataset = BeliefBankDataset(
+                project_root=PROJECT_DIR,
+                recreate_ids=True,
+                data_type=args.data_type,
+                label=args.label,
+                shuffle=True
+            )
+
         logger.info(f"✅ Dataset caricato con successo! Elementi totali: {len(dataset)}")
 
         fact, label, instance_id = dataset[0]
-        logger.info(f"--- 🔍 Test Accesso Singolo ---\nID: {instance_id} | Fatto: {fact} | Etichetta: {label}")
+        logger.info(f"--- 🔍 Test Accesso Singolo ---\nID: {instance_id}\nFatto/Prompt: \n{fact}\nEtichetta: {label}")
 
-        logger.info(f"--- 📦 Test DataLoader (Batch Size = {args.batch_size}) ---")
+        logger.info(f"\n--- 📦 Test DataLoader (Batch Size = {args.batch_size}) ---")
         dataloader = DataLoader(dataset, batch_size=args.batch_size, shuffle=True)
         batch_facts, batch_labels, batch_ids = next(iter(dataloader))
 
         for i in range(min(args.batch_size, len(batch_facts))):
-            logger.info(f"[{batch_ids[i].item():04d}] {batch_facts[i]} --> {batch_labels[i]}")
+            # Stampiamo solo i primi 80 caratteri per non riempire la console
+            logger.info(f"[{batch_ids[i]}] {batch_facts[i][:80]}... --> {batch_labels[i]}")
 
     except Exception as e:
         logger.error(f"❌ Errore durante il test del dataset: {e}", exc_info=True)

@@ -1,85 +1,93 @@
 import os
 import json
-import string
+import logging
 import pandas as pd
+from typing import List, Dict, Tuple, Union
 from torch.utils.data import Dataset
 
-LABELS = ["no", "yes"]
+logger = logging.getLogger(__name__)
 
 
 class EntailmentBankDataset(Dataset):
-    def __init__(self, project_root, recreate_ids=True, label=0):
+    LABELS: Dict[int, str] = {0: "no", 1: "yes"}
+
+    def __init__(self, project_root: str, label: Union[int, str] = "all", shuffle: bool = False) -> None:
+        """
+        Inizializza il dataset EntailmentBank.
+        :param label: 1 per solo veri, 0 per solo falsi generati, "all" per entrambi.
+        """
         self.label = label
         self.all_data = self.get_dataset(project_root=project_root)
         self.dataset = self.format_dataset()
-        # Create instance ids
-        if ('instance_id' not in self.dataset.columns) or recreate_ids:
-            self.dataset = self.create_instance_ids()
 
+        if shuffle:
+            self.dataset = self.dataset.sample(frac=1).reset_index(drop=True)
 
-    def __len__(self):
+    def __len__(self) -> int:
         return len(self.dataset)
 
-
-    def __getitem__(self, idx):
+    def __getitem__(self, idx: int) -> Tuple[str, str, str]:
         item = self.dataset.iloc[idx]
 
-        id = item['instance_id'].item()
-        reasoning = item['reasoning']
-        
-        label = item['label'].item()
-        computed_label = LABELS[label] if self.label == 0 else LABELS[1 - label]
+        instance_id: str = item['instance_id']
+        text: str = item['text']
+        label_val: int = item['label']
 
-        return reasoning, computed_label, id
+        computed_label: str = self.LABELS[label_val]
 
-        
-    def get_dataset(self, project_root):
+        return text, computed_label, instance_id
+
+    def get_dataset(self, project_root: str) -> List[Dict]:
         all_data = []
         data_dir = os.path.join(project_root, "data", "entailmentbank")
 
+        if not os.path.exists(data_dir):
+            logger.warning(f"⚠️ Cartella dataset non trovata: {data_dir}")
+            return all_data
+
         for file in os.listdir(data_dir):
             if file.endswith(".jsonl"):
-                d_entailmentbank = [json.loads(s) for s in list(open(os.path.join(data_dir, file)))]
-                all_data.extend(d_entailmentbank)    
+                with open(os.path.join(data_dir, file), 'r', encoding='utf-8') as f:
+                    all_data.extend([json.loads(s) for s in f])
 
         return all_data
-    
 
-    def format_dataset(self):
+    def format_dataset(self) -> pd.DataFrame:
         records = []
 
-        for item in self.all_data:
-            records.append({
-                "reasoning": self.format_item(item),
-                "label": 1  # All instances are positive examples
-            })
+        # Estraiamo tutte le ipotesi per creare gli esempi negativi
+        all_hypotheses = [item["hypothesis"] for item in self.all_data]
+        # Shifting: l'ipotesi dell'elemento i-esimo diventa quella dell'elemento i+1
+        shifted_hypotheses = all_hypotheses[1:] + [all_hypotheses[0]] if all_hypotheses else []
 
-        return pd.DataFrame(records).drop_duplicates()
+        for i, item in enumerate(self.all_data):
+            triples = item.get("meta", {}).get("triples", {})
+            # Uniamo i fatti in una premessa unica
+            premises = " ".join(triples.values())
 
+            # --- 1. ESEMPI POSITIVI (Label 1) ---
+            if self.label in [1, "all"]:
+                hypothesis_true = item["hypothesis"]
+                prompt_pos = f"Given these premises: {premises}\nIs the following hypothesis true: {hypothesis_true}?"
 
-    def format_item(self, item):
-        reasoning = item["full_text_proof"]
-        triples = item["meta"]["triples"]
-        intermediate_conclusions = item["meta"]["intermediate_conclusions"]
-        sentences = {**triples, **intermediate_conclusions}
-        
-        for key, value in sentences.items():
-            reasoning = reasoning.replace(f"{key}: ", value)
-            reasoning = reasoning.replace(key, value)
+                records.append({
+                    "instance_id": f"{item['id']}_pos",
+                    "text": prompt_pos,
+                    "label": 1
+                })
 
-        return reasoning
+            # --- 2. ESEMPI NEGATIVI (Label 0) ---
+            if self.label in [0, "all"] and shifted_hypotheses:
+                hypothesis_false = shifted_hypotheses[i]
+                prompt_neg = f"Given these premises: {premises}\nIs the following hypothesis true: {hypothesis_false}?"
 
+                records.append({
+                    "instance_id": f"{item['id']}_neg",
+                    "text": prompt_neg,
+                    "label": 0
+                })
 
-    def get_language_by_instance_id(self, instance_id):
-        return "EN"  # BeliefBank is in English, so we return "EN" directly
+        return pd.DataFrame(records).drop_duplicates(subset=['instance_id'])
 
-    
-    def create_instance_ids(self):
-        instance_ids = list(range(len(self.dataset)))
-
-        if "instance_id" in self.dataset.columns:
-            self.dataset = self.dataset.drop(columns="instance_id")
-
-        self.dataset = self.dataset.assign(instance_id=instance_ids)
-
-        return self.dataset
+    def get_language_by_instance_id(self, instance_id: str) -> str:
+        return "EN"

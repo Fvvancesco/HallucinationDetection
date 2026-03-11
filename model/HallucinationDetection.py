@@ -4,7 +4,7 @@ import logging
 import torch
 import pandas as pd
 from tqdm import tqdm
-from typing import List, Dict, Tuple, Optional, Any
+from typing import List, Dict, Tuple, Optional, Any, Union
 from sklearn.model_selection import train_test_split
 import matplotlib.pyplot as plt
 import seaborn as sns
@@ -364,8 +364,37 @@ class HallucinationDetection:
         if hasattr(output, 'scores') and output.scores:
             ut.save_model_logits(torch.stack(output.scores, dim=1), instance_id, self.dirs["logits"])
 
+    def load_dataset(self, dataset_name: str = DEFAULT_DATASET, use_local: bool = False,
+                     label: Union[int, str] = 1) -> None:
+        logger.info(f"{'--' * 25} Loading dataset {dataset_name} {'--' * 25}")
+        self.label = label
+
+        if dataset_name in ["beliefbank", "belief"]:
+            self.dataset_name = "beliefbank"
+            self.dataset = BeliefBankDataset(
+                project_root=self.project_dir,
+                data_type="constraints",
+                label=label,
+                shuffle=False
+            )
+        elif dataset_name == "entailmentbank":
+            from logical_datasets.EntailmentBankDataset import EntailmentBankDataset
+            self.dataset_name = "entailmentbank"
+            self.dataset = EntailmentBankDataset(
+                project_root=self.project_dir,
+                label=label,
+                shuffle=False
+            )
+        else:
+            raise ValueError(f"Dataset {dataset_name} not supported.")
+
     def _prepare_inputs(self, fact: str, use_chat_template: bool) -> Tuple[str, Dict[str, torch.Tensor]]:
-        user_prompt = USER_PROMPT_TEMPLATE.format(fact=fact)
+        # Se usiamo EntailmentBank, la stringa 'fact' è già formattata
+        if self.dataset_name == "entailmentbank":
+            user_prompt = fact
+        else:
+            user_prompt = USER_PROMPT_TEMPLATE.format(fact=fact)
+
         if use_chat_template:
             messages = ut.build_messages(system_prompt=SYSTEM_PROMPT, user_prompt=user_prompt, k=0)
             tokens = self.tokenizer.apply_chat_template(messages, tokenize=True, add_generation_prompt=True,
@@ -533,12 +562,13 @@ class HallucinationDetection:
 
         if min_samples == 0: return None, None
 
-        idx_0_bal = idx_0[torch.randperm(len(idx_0), generator=g)[:min_samples]]
-        idx_1_bal = idx_1[torch.randperm(len(idx_1), generator=g)[:min_samples]]
+        # Aggiungiamo esplicitamente 'device=labels.device' per matchare il generatore
+        idx_0_bal = idx_0[torch.randperm(len(idx_0), generator=g, device=labels.device)[:min_samples]]
+        idx_1_bal = idx_1[torch.randperm(len(idx_1), generator=g, device=labels.device)[:min_samples]]
 
         balanced_indices = torch.cat([idx_0_bal, idx_1_bal])
         # Rimescolamento finale
-        balanced_indices = balanced_indices[torch.randperm(len(balanced_indices), generator=g)]
+        balanced_indices = balanced_indices[torch.randperm(len(balanced_indices), generator=g, device=labels.device)]
 
         return activations[balanced_indices], labels[balanced_indices]
 
