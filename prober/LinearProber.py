@@ -22,7 +22,7 @@ class LogisticRegression(nn.Module):
 
 
 class LinearProber:
-    MODEL_DIR = "kc_{activation}_layer{layer}.pt"
+    MODEL_DIR = "prob_{activation}_layer{layer}.pt"
     MODEL_NAME = "prob_model_list_{layer}_L1factor3.pt"
 
     def __init__(self, project_dir, activation="hidden", layer=16, load_pretrained=True, input_dim=4096):
@@ -32,7 +32,8 @@ class LinearProber:
         self.model_path = os.path.join(project_dir, "models", self.MODEL_DIR.format(activation=activation, layer=layer),
                                        self.model_name)
 
-        self.model = LogisticRegression(input_dim=input_dim, use_bias=True).cuda()
+        device = "cuda" if torch.cuda.is_available() else "cpu"
+        self.model = LogisticRegression(input_dim=input_dim, use_bias=True).to(device)
 
         if load_pretrained:
             self.load_probing_model()
@@ -53,10 +54,39 @@ class LinearProber:
 
         self.model.eval()
 
-    def train(self, X_train, y_train, X_val, y_val, epochs=50, lr=1e-3, batch_size=64):
+    def train_basic(self, X_train, y_train, X_val, y_val, epochs=50, lr=1e-3, batch_size=64):
         """Addestra il prober e calcola l'accuracy sul validation set."""
         criterion = nn.BCELoss()
         optimizer = torch.optim.Adam(self.model.parameters(), lr=lr)
+
+        dataset = TensorDataset(X_train, y_train)
+        dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=True)
+
+        for epoch in range(epochs):
+            self.model.train()
+            for batch_X, batch_y in dataloader:
+                optimizer.zero_grad()
+                outputs = self.model(batch_X)
+                loss = criterion(outputs, batch_y)
+                loss.backward()
+                optimizer.step()
+
+        # Valutazione
+        self.model.eval()
+        with torch.no_grad():
+            val_outputs = self.model(X_val)
+            val_preds = (val_outputs > 0.5).float()
+            acc = accuracy_score(y_val.cpu(), val_preds.cpu())
+
+        return acc
+
+    def train(self, X_train, y_train, X_val, y_val, epochs=50, lr=1e-3, batch_size=64):
+        """Addestra il prober e calcola l'accuracy sul validation set con Regolarizzazione."""
+        criterion = nn.BCELoss()
+
+        # Usiamo AdamW con un forte Weight Decay (L2 Regularization)
+        # Questo impedisce al prober di overfittare le 4096 dimensioni.
+        optimizer = torch.optim.AdamW(self.model.parameters(), lr=lr, weight_decay=0.05)
 
         dataset = TensorDataset(X_train, y_train)
         dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=True)

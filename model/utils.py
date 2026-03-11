@@ -91,31 +91,6 @@ def load_llm(model_name, bnb_config, local=False, dtype=torch.bfloat16, use_devi
 
     return model
 
-    """
-    if not local:
-        model = LlamaForCausalLM.from_pretrained(
-            model_name,
-            use_cache=False,
-            attn_implementation=attention,
-            quantization_config=bnb_config,
-            torch_dtype=dtype,
-            device_map={'':device_string},#device_map_config,       #{'':device_string},           #{"": 0},  # forces model to cuda:0 otherwise set as done in the else branch
-            max_memory=max_memory_config
-        )
-    else:
-        model_local_path = get_weight_dir(model_name)
-        model = LlamaForCausalLM.from_pretrained(
-            model_local_path,
-            local_files_only=True,
-            use_cache=False,
-            attn_implementation=attention,
-            quantization_config=bnb_config,
-            torch_dtype=dtype,
-            device_map={'':device_string}, #device_map_config,       #{'':device_string}, # dispatch efficiently the model on the available ressources
-            max_memory=max_memory_config,
-        )"""
-
-
 def load_tokenizer(model_name, local=False):
     if not local:
         tokenizer = AutoTokenizer.from_pretrained(model_name, token=True) #True per accedere con il token, false altrimenti
@@ -187,25 +162,6 @@ def parse_layer_id_and_instance_id(s):
         print(s)
     return layer_idx, instance_idx
 
-"""
-def load_activations(
-        model_name="meta-llama/Meta-Llama-3-8B",
-        data_name="demo",
-        analyse_activation="hidden",
-        activation_type="test",
-        layer_idx=None,
-        results_dir="cache_data",
-    ) -> torch.Tensor:
-    model_name = model_name.split("/")[-1]
-    act_dir = os.path.join(results_dir, model_name, data_name, f"activation_{analyse_activation}", activation_type, f"layer{layer_idx}_activations.pt")
-    
-    ids_path = os.path.join(results_dir, model_name, data_name, f"activation_{analyse_activation}", activation_type, f"layer{layer_idx}_instance_ids.json")
-    instance_ids = json.load(open(ids_path, "r"))
-
-    return torch.load(act_dir, map_location="cuda"), instance_ids
-
-"""
-
 
 def load_activations(
         model_name="meta-llama/Meta-Llama-3-8B",
@@ -226,6 +182,7 @@ def load_activations(
         raise FileNotFoundError(f"File mancanti per il layer {layer_idx} in {base_dir}")
 
     instance_ids = json.load(open(ids_path, "r"))
-    activations = torch.load(act_path, map_location="cuda")
+    # Carichiamo prima su CPU in modo sicuro, poi ci penserà il modello a gestire la memoria
+    activations = torch.load(act_path, map_location="cpu", weights_only=True)
 
     return activations, instance_ids
