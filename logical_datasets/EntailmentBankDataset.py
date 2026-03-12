@@ -78,4 +78,3 @@ class EntailmentBankDataset(Dataset):
 
     def get_language_by_instance_id(self, instance_id: int) -> str:
         return "EN"
-
