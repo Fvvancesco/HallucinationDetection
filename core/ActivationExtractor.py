@@ -1,3 +1,5 @@
+import os
+
 import torch
 import logging
 from tqdm import tqdm
@@ -9,12 +11,14 @@ from utils.InspectOutputContext import InspectOutputContext
 logger = logging.getLogger(__name__)
 
 class ActivationExtractor:
-    def __init__(self, llm: Any, tokenizer: Any, dataset: Any, storage_manager: Any, system_prompt: str, user_prompt_template: str, max_new_tokens: int = 5):
+    def __init__(self, llm: Any, tokenizer: Any, dataset: Any, storage_manager: Any, system_prompt: str, user_prompt_template: str, pos_token_str: str, neg_token_str: str, max_new_tokens: int = 5):
         self.llm = llm
         self.tokenizer = tokenizer
         self.dataset = dataset
         self.storage_manager = storage_manager  # Iniettiamo il manager dell'I/O
         self.device = self.llm.device
+        self.pos_token_str = pos_token_str
+        self.neg_token_str = neg_token_str
         self.max_new_tokens = max_new_tokens
         self.system_prompt = system_prompt
         self.user_prompt_template = user_prompt_template
@@ -49,6 +53,10 @@ class ActivationExtractor:
 
         for idx in tqdm(range(len(self.dataset)), desc="Saving activations"):
             fact, _, instance_id = self.dataset[idx]
+
+            if self._is_already_processed(instance_id, is_attribution=False):
+                continue
+
             formatted_prompt, tokens = self._prepare_inputs(fact, use_chat_template)
 
             with InspectOutputContext(self.llm, module_names, save_generation=True,
@@ -61,12 +69,17 @@ class ActivationExtractor:
         self.storage_manager.combine_activations()
 
     def save_activations_pure_forward(self, use_chat_template: bool = True) -> None:
+        """Salvataggio classico (file singolo per istanza). Lento su disco, ma robusto. Salva fino alla fine del prompt all'utente"""
         module_names = self._get_target_modules()
         if not self.dataset:
             raise ValueError("Dataset non caricato.")
 
         for idx in tqdm(range(len(self.dataset)), desc="Saving pure activations"):
             fact, _, instance_id = self.dataset[idx]
+
+            if self._is_already_processed(instance_id, is_attribution=False):
+                continue
+
             formatted_prompt, tokens = self._prepare_inputs(fact, use_chat_template)
 
             # Fase 1: Generazione libera
@@ -80,122 +93,101 @@ class ActivationExtractor:
 
         self.storage_manager.combine_activations()
 
-    def save_attributions_and_grads(self) -> None:
-        logger.info(f"{'--' * 25} Saving Attributions (Act x Grad) {'--' * 25}")
-        torch.set_grad_enabled(True)
-        self.llm.eval()
-        for param in self.llm.parameters():
-            param.requires_grad = False
-
-        if not self.dataset:
-            raise ValueError("Dataset non caricato.")
-
-        module_names = self._get_target_modules()
-
-        # Rinomino per chiarezza: questi sono i token per "TRUE" e "FALSE"
-        token_true = self.tokenizer.encode(" TRUE", add_special_tokens=False)[-1]
-        token_false = self.tokenizer.encode(" FALSE", add_special_tokens=False)[-1]
-
-        target_dirs = {
-            "hidden": self.storage_manager.dirs["attr_hidden"],
-            "mlp": self.storage_manager.dirs["attr_mlp"],
-            "attn": self.storage_manager.dirs["attr_attn"]
-        }
-
-        for idx in tqdm(range(len(self.dataset)), desc="Computing attributions"):
-            # 1. Ora estraiamo la 'label' (la verità) invece di ignorarla con '_'
-            fact, label, instance_id = self.dataset[idx]
-            _, tokens = self._prepare_inputs(fact, use_chat_template=True)
-
-            # 2. Definiamo qual è l'allucinazione in base alla ground truth
-            # Nei tuoi dataset, le label sono stringhe "yes" o "no"
-            if str(label).lower() == "yes":
-                correct_token = token_true
-                hallucinated_token = token_false
-            else:
-                correct_token = token_false
-                hallucinated_token = token_true
-
-            with InspectOutputContext(self.llm, module_names, track_grads=True) as inspect:
-                outputs = self.llm(input_ids=tokens["input_ids"], attention_mask=tokens.get("attention_mask"))
-
-                # 3. NUOVA METRICA: Logit(Allucinazione) - Logit(Risposta Corretta)
-                metric = outputs.logits[0, -1, hallucinated_token] - outputs.logits[0, -1, correct_token]
-
-                self.llm.zero_grad()
-                metric.backward()
-
-            self.storage_manager.save_tensors_to_disk(inspect.catcher, instance_id, is_attribution=True,
-                                                      target_dirs=target_dirs,
-                                                      save_last=False)
-
-        self.storage_manager.combine_activations(is_attribution=True)
-
-    def save_attributions_and_grads_true_vs_false(self) -> None:
-        logger.info(f"{'--' * 25} Saving Attributions (Act x Grad) {'--' * 25}")
-        torch.set_grad_enabled(True)
-        self.llm.eval()
-        for param in self.llm.parameters():
-            param.requires_grad = False
-
-        if not self.dataset:
-            raise ValueError("Dataset non caricato.")
-
-        module_names = self._get_target_modules()
-        pos_token = self.tokenizer.encode(" TRUE", add_special_tokens=False)[-1]
-        neg_token = self.tokenizer.encode(" FALSE", add_special_tokens=False)[-1]
-
-        target_dirs = {
-            "hidden": self.storage_manager.dirs["attr_hidden"],
-            "mlp": self.storage_manager.dirs["attr_mlp"],
-            "attn": self.storage_manager.dirs["attr_attn"]
-        }
-
-        for idx in tqdm(range(len(self.dataset)), desc="Computing attributions"):
-            fact, _, instance_id = self.dataset[idx]
-            _, tokens = self._prepare_inputs(fact, use_chat_template=True)
-
-            with InspectOutputContext(self.llm, module_names, track_grads=True) as inspect:
-                outputs = self.llm(input_ids=tokens["input_ids"], attention_mask=tokens.get("attention_mask"))
-                metric = outputs.logits[0, -1, pos_token] - outputs.logits[0, -1, neg_token]
-
-                self.llm.zero_grad()
-                metric.backward()
-
-            self.storage_manager.save_tensors_to_disk(inspect.catcher, instance_id, is_attribution=True, target_dirs=target_dirs,
-                                       save_last=False)
-
-        self.storage_manager.combine_activations(is_attribution=True)
 
     def save_activations_chunked(self, use_chat_template: bool = True, chunk_size: int = 1000) -> None:
-        """Versione I/O ottimizzata: usa la RAM per raggruppare migliaia di attivazioni prima di salvare."""
         module_names = self._get_target_modules()
-        if not self.dataset:
-            raise ValueError("Dataset non caricato.")
+        if not self.dataset: raise ValueError("Dataset non caricato.")
 
-        # Diciamo allo storage manager di preparare la RAM
         self.storage_manager.init_buffers()
         chunk_idx = 0
+        items_in_buffer = 0  # <--- 1. NUOVO CONTATORE
 
         for idx in tqdm(range(len(self.dataset)), desc="Saving activations (Chunked)"):
             fact, _, instance_id = self.dataset[idx]
+
+            # Se è già processato, saltiamo tutto (il contatore non cresce)
+            if self._is_already_processed(instance_id, is_attribution=False):
+                continue
+
             formatted_prompt, tokens = self._prepare_inputs(fact, use_chat_template)
 
             with InspectOutputContext(self.llm, module_names, save_generation=True,
                                       save_dir=self.storage_manager.dirs["generations"]) as inspect:
                 self._generate_text_and_logits(tokens, formatted_prompt, instance_id)
 
-            # Inviamo i tensori in RAM invece che su disco
             self.storage_manager.bufferize_tensors(inspect.catcher, instance_id, is_attribution=False)
+            items_in_buffer += 1  # <--- 2. INCREMENTIAMO IL CONTATORE
 
-            if (idx + 1) % chunk_size == 0:
+            # 3. CONTROLLIAMO IL BUFFER, NON L'INDICE ASSOLUTO
+            if items_in_buffer == chunk_size:
                 self.storage_manager.flush_buffer_to_disk(chunk_idx, prefix="activation")
                 chunk_idx += 1
                 self.storage_manager.init_buffers()
+                items_in_buffer = 0  # Resettiamo il contatore
 
-        # Flush finale per gli elementi rimasti
-        if self.storage_manager.instance_ids_buffer[self.target_layers[0]]:
+        # Flush finale per gli elementi rimasti (anche se sono meno di 1000)
+        if items_in_buffer > 0:
             self.storage_manager.flush_buffer_to_disk(chunk_idx, prefix="activation")
+
+    def save_attributions_and_grads(self, metric_type: str = "hallucination") -> None:
+        logger.info(f"{'--' * 25} Saving Attributions [{metric_type.upper()}] {'--' * 25}")
+        torch.set_grad_enabled(True)
+        self.llm.eval()
+        for param in self.llm.parameters():
+            param.requires_grad = False
+
+        if not self.dataset:
+            raise ValueError("Dataset non caricato.")
+
+        module_names = self._get_target_modules()
+
+        # 1. I token bersaglio ora vengono letti dinamicamente!
+        pos_id = self.tokenizer.encode(self.pos_token_str, add_special_tokens=False)[-1]
+        neg_id = self.tokenizer.encode(self.neg_token_str, add_special_tokens=False)[-1]
+
+        target_dirs = {
+            "hidden": self.storage_manager.dirs["attr_hidden"],
+            "mlp": self.storage_manager.dirs["attr_mlp"],
+            "attn": self.storage_manager.dirs["attr_attn"]
+        }
+
+        # 2. DEFINIZIONE DELLE METRICHE COME FUNZIONI (lambda)
+        # Ogni metrica riceve: i logits(tensor), l'id positivo, l'id negativo, e la verità (label)
+        metrics_dict = {
+            "hallucination": lambda logits, p, n, label: (
+                (logits[0, -1, n] - logits[0, -1, p]) if str(label).lower() == "yes"
+                else (logits[0, -1, p] - logits[0, -1, n])
+            ),
+            "true_vs_false": lambda logits, p, n, label: (
+                    logits[0, -1, p] - logits[0, -1, n]
+            )
+        }
+
+        if metric_type not in metrics_dict:
+            raise ValueError(f"Metrica '{metric_type}' non trovata nel dizionario.")
+        metric_function = metrics_dict[metric_type]
+
+        for idx in tqdm(range(len(self.dataset)), desc=f"Attributions ({metric_type})"):
+            fact, label, instance_id = self.dataset[idx]
+
+            if self._is_already_processed(instance_id, is_attribution=True):
+                continue
+
+            _, tokens = self._prepare_inputs(fact, use_chat_template=True)
+
+            with InspectOutputContext(self.llm, module_names, track_grads=True) as inspect:
+                outputs = self.llm(input_ids=tokens["input_ids"], attention_mask=tokens.get("attention_mask"))
+
+                # 3. Applichiamo la funzione passata matematicamente
+                metric = metric_function(outputs.logits, pos_id, neg_id, label)
+
+                self.llm.zero_grad()
+                metric.backward()
+
+            self.storage_manager.save_tensors_to_disk(inspect.catcher, instance_id, is_attribution=True,
+                                                      target_dirs=target_dirs, save_last=False)
+
+        self.storage_manager.combine_activations(is_attribution=True)
 
     # -------------
     # Helpers & Utilities
@@ -245,3 +237,14 @@ class ActivationExtractor:
 
         tokens = self.tokenizer(user_prompt, return_tensors="pt").to(self.device)
         return user_prompt, tokens
+
+    def _is_already_processed(self, instance_id: int, is_attribution: bool) -> bool:
+        """Controlla su disco se questo specifico elemento è già stato elaborato in precedenza."""
+        if is_attribution:
+            # Se stiamo calcolando le attribuzioni, verifichiamo se esiste il file del primo layer
+            path = os.path.join(self.storage_manager.dirs["attr_hidden"], f"layer0-id{instance_id}.pt")
+            return os.path.exists(path)
+        else:
+            # Per le estrazioni standard/chunked, verifichiamo se esiste già il testo generato
+            path = os.path.join(self.storage_manager.dirs["generations"], f"generation_{instance_id}.json")
+            return os.path.exists(path)

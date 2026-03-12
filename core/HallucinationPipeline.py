@@ -44,14 +44,23 @@ class HallucinationPipeline:
         num_layers = getattr(self.llm.config, "num_hidden_layers", 32)
         target_layers = list(range(num_layers))
 
+        # Estraiamo i dati del prompt
         prompt_data = PROMPT_REGISTRY.get(prompt_id, PROMPT_REGISTRY["base_v1"])
 
         self.storage_manager = StorageManager(self.project_dir, self.llm_name, self.dataset_name, target_layers, prompt_id=prompt_id)
         self.storage_manager.setup_directories()
 
-        self.extractor = ActivationExtractor(self.llm, self.tokenizer, self.dataset, self.storage_manager,
-                                             system_prompt=prompt_data["system"],
-                                             user_prompt_template=prompt_data["user"])
+        #self.extractor = ActivationExtractor(self.llm, self.tokenizer, self.dataset, self.storage_manager,
+                                             #system_prompt=prompt_data["system"],
+                                             #user_prompt_template=prompt_data["user"])
+
+        self.extractor = ActivationExtractor(
+            self.llm, self.tokenizer, self.dataset, self.storage_manager,
+            system_prompt=prompt_data["system"],
+            user_prompt_template=prompt_data["user"],
+            pos_token_str=prompt_data.get("pos_token", " TRUE"),
+            neg_token_str=prompt_data.get("neg_token", " FALSE")
+        )
 
     def run_extraction(self, method_name: str, **kwargs) -> None:
         if not self.extractor: raise RuntimeError("LLM non caricato.")

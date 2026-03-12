@@ -23,7 +23,6 @@ logger = logging.getLogger(__name__)
 
 PROJECT_DIR = os.path.dirname(os.path.abspath(__file__))
 
-
 def setup_huggingface_login() -> None:
     """Esegue il login su HuggingFace in modo sicuro."""
     os.environ["HF_HUB_DISABLE_SYMLINKS_WARNING"] = "1"
@@ -46,7 +45,6 @@ def setup_pipeline(args: argparse.Namespace, current_prompt_id=None, require_llm
     logger.info(f"🖥️ Cuda disponibile: {torch.cuda.is_available()}")
 
     p_id = current_prompt_id or args.prompt_id
-    prompt_data = PROMPT_REGISTRY[p_id]
 
     pipeline = HallucinationPipeline(project_dir=PROJECT_DIR)
     pipeline.load_dataset(dataset_name=args.data_name, label=args.label)
@@ -56,7 +54,7 @@ def setup_pipeline(args: argparse.Namespace, current_prompt_id=None, require_llm
         logger.info(f"✂️ Dataset limitato a {len(pipeline.dataset)} elementi per il test rapido.")
 
     if require_llm:
-        pipeline.load_llm(llm_name=args.model_name, use_local=args.use_local)
+        pipeline.load_llm(llm_name=args.model_name, prompt_id=p_id, use_local=args.use_local)
 
     return pipeline
 
@@ -92,7 +90,6 @@ def test_dataset(args: argparse.Namespace) -> None:
     except Exception as e:
         logger.error(f"❌ Errore durante il test del dataset: {e}", exc_info=True)
 
-
 def run_extraction(args: argparse.Namespace, method_name: str, success_msg: str, **kwargs: Any) -> None:
     """Esegue un metodo di estrazione dinamico sulla pipeline."""
     pipeline = setup_pipeline(args, require_llm=True)
@@ -104,7 +101,6 @@ def run_extraction(args: argparse.Namespace, method_name: str, success_msg: str,
         logger.info(f"📁 Controlla la cartella cache.")
     except Exception as e:
         logger.error(f"❌ Errore durante l'estrazione: {e}", exc_info=True)
-
 
 def run_probing_only(args: argparse.Namespace) -> None:
     """Esegue solo la fase di probing su attivazioni già estratte."""
@@ -126,13 +122,11 @@ def run_probing_only(args: argparse.Namespace) -> None:
             except Exception as e:
                 logger.error(f"❌ Errore al layer {layer} con target {target}: {e}")
 
-
 def run_train_probers(args: argparse.Namespace) -> None:
     """Avvia l'addestramento dei probing."""
     pipeline = setup_pipeline(args, require_llm=False)
     logger.info("⚙️ Avvio addestramento e valutazione probers...")
     pipeline.train_probers(llm_name=args.model_name, test_size=0.2, epochs=30)
-
 
 def run_analyze(args: argparse.Namespace) -> None:
     """Avvia l'analizzatore di attribuzioni."""
@@ -181,6 +175,8 @@ def main() -> None:
     parser.add_argument("--chunk_size", type=int, default=1000, help="Dimensione blocco per salvataggio RAM.")
     parser.add_argument("--prompt_id", type=str, default="base_v1", help="ID del prompt dal registry")
     parser.add_argument("--run_all_prompts", action="store_true", help="Esegue la pipeline su tutti i prompt in sequenza")
+    parser.add_argument("--attribution_metric", type=str, default="hallucination",
+                        choices=["hallucination", "true_vs_false"], help="Metrica per il calcolo dei gradienti")
 
     args = parser.parse_args()
 
@@ -197,7 +193,8 @@ def main() -> None:
                                                          success_msg="Estrazione pure forward completata!",
                                                          use_chat_template=True),
         "test_attribution": functools.partial(run_extraction, method_name="save_attributions_and_grads",
-                                              success_msg="Attribuzioni calcolate con successo!"),
+                                              success_msg="Attribuzioni calcolate con successo!",
+                                              metric_type=args.attribution_metric),
         "probing": run_probing_only,
         "train_probers": run_train_probers,
         "analyze": run_analyze,
