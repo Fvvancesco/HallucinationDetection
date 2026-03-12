@@ -4,7 +4,6 @@ import torch.nn as nn
 from torch.utils.data import DataLoader, TensorDataset
 from sklearn.metrics import accuracy_score
 
-
 class LogisticRegression(nn.Module):
     def __init__(self, input_dim, use_bias):
         super(LogisticRegression, self).__init__()
@@ -55,7 +54,7 @@ class LinearProber:
         self.model.eval()
 
     def train_basic(self, X_train, y_train, X_val, y_val, epochs=50, lr=1e-3, batch_size=64):
-        """Addestra il prober e calcola l'accuracy sul validation set."""
+        """Addestra il probing e calcola l'accuracy sul validation set."""
         criterion = nn.BCELoss()
         optimizer = torch.optim.Adam(self.model.parameters(), lr=lr)
 
@@ -81,11 +80,11 @@ class LinearProber:
         return acc
 
     def train(self, X_train, y_train, X_val, y_val, epochs=50, lr=1e-3, batch_size=64):
-        """Addestra il prober e calcola l'accuracy sul validation set con Regolarizzazione."""
+        """Addestra il probing e calcola l'accuracy sul validation set con Regolarizzazione."""
         criterion = nn.BCELoss()
 
         # Usiamo AdamW con un forte Weight Decay (L2 Regularization)
-        # Questo impedisce al prober di overfittare le 4096 dimensioni.
+        # Questo impedisce al probing di overfittare le 4096 dimensioni.
         optimizer = torch.optim.AdamW(self.model.parameters(), lr=lr, weight_decay=0.05)
 
         dataset = TensorDataset(X_train, y_train)

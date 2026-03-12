@@ -6,7 +6,6 @@ from collections import Counter
 
 from main import PROJECT_DIR
 
-
 def analyze_beliefbank(facts_file, constraints_file):
     print(f"Caricamento dati da {facts_file} e {constraints_file}...\n")
 

@@ -3,9 +3,9 @@ import torch
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
-from typing import List, Dict, Tuple
+from typing import List, Tuple
 
-import model.utils as ut
+import utils.Utils as ut
 from logical_datasets.BeliefBankDataset import BeliefBankDataset
 
 
@@ -100,9 +100,86 @@ class AttributionAnalyzer:
     # ==========================================
     # FASE B: Il "Dove" (Profilo dei Layer)
     # ==========================================
+    import numpy as np
+    import pandas as pd
+    import torch
+    import matplotlib.pyplot as plt
+
     def plot_layer_profile(self, instance_id: int, total_layers: int = 32):
-        """Calcola l'energia totale di ogni strato per individuare dove il modello prende la decisione."""
+        """
+        Analisi XAI: individua il range energetico (Max-Min) e il layer di massimo
+        cambiamento (salto energetico) per ogni modulo.
+        """
         print(f"\n--- FASE B: Analisi Layer (Dove) | Instance ID: {instance_id} ---")
+        fact, _ = self._get_tokens_from_instance(instance_id)
+
+        risultati = {mod: [] for mod in self.modules}
+
+        for mod in self.modules:
+            for layer in range(total_layers):
+                try:
+                    tensor = self._get_tensor(mod, layer, instance_id)
+                    energia_totale = torch.abs(tensor).sum().item()
+                    risultati[mod].append(energia_totale)
+                except (FileNotFoundError, KeyError):
+                    risultati[mod].append(0.0)
+
+        df = pd.DataFrame(risultati)
+
+        plt.figure(figsize=(13, 7))
+
+        # Color map per coerenza
+        colors = {'hidden': 'black', 'mlp': 'blue', 'attn': 'red'}
+        labels = {'hidden': 'Hidden (Autostrada)', 'mlp': 'MLP (Fatti)', 'attn': 'Attention (Contesto)'}
+        styles = {'hidden': '--', 'mlp': '-', 'attn': '-'}
+
+        for mod in df.columns:
+            # 1. Calcolo Delta Globale (Max - Min)
+            delta_totale = df[mod].max() - df[mod].min()
+
+            # 2. Calcolo Salto Maggiore (Derivata)
+            # diff() calcola la differenza tra layer n e n-1
+            diffs = df[mod].diff().abs()
+            max_jump_layer = diffs.idxmax()
+            max_jump_value = diffs.max()
+
+            # Plot della linea principale
+            plt.plot(df.index, df[mod], label=f"{labels[mod]} [Δ Tot: {delta_totale:.2f}]",
+                     color=colors[mod], linewidth=2, linestyle=styles[mod])
+
+            # 3. Evidenzia il punto di massimo salto sul grafico
+            if not np.isnan(max_jump_layer):
+                plt.scatter(max_jump_layer, df.loc[max_jump_layer, mod],
+                            color=colors[mod], s=100, edgecolors='white', zorder=5)
+
+                # Annotazione del punto di decisione
+                plt.annotate(f"Salto @ L{max_jump_layer}",
+                             xy=(max_jump_layer, df.loc[max_jump_layer, mod]),
+                             xytext=(max_jump_layer + 0.5, df.loc[max_jump_layer, mod] * 1.05),
+                             fontsize=9, fontweight='bold', color=colors[mod],
+                             arrowprops=dict(arrowstyle='->', color=colors[mod], alpha=0.5))
+
+        plt.title(f"Analisi Feature Attribution - Profilo Energetico\nFatto: {fact}", fontsize=14)
+        plt.xlabel("Numero Layer (0 -> 31)", fontsize=12)
+        plt.ylabel("Energia Totale (Somma Assoluta)", fontsize=12)
+        plt.xticks(np.arange(0, total_layers, 2))
+        plt.grid(True, alpha=0.2, linestyle='--')
+
+        # Legenda con informazioni sulla variabilità
+        plt.legend(loc='upper left', frameon=True, shadow=True)
+
+        plt.tight_layout()
+        plt.show()
+
+        # Log testuale per debug/analisi
+        for mod in df.columns:
+            delta = df[mod].max() - df[mod].min()
+            jump_idx = df[mod].diff().abs().idxmax()
+            print(f"[{mod.upper()}] Delta Totale: {delta:.2f} | Picco variazione al Layer: {jump_idx}")
+
+    #def plot_layer_profile(self, instance_id: int, total_layers: int = 32):
+        """Calcola l'energia totale di ogni strato per individuare dove il modello prende la decisione."""
+        """print(f"\n--- FASE B: Analisi Layer (Dove) | Instance ID: {instance_id} ---")
         fact, _ = self._get_tokens_from_instance(instance_id)
 
         risultati = {mod: [] for mod in self.modules}
@@ -130,7 +207,7 @@ class AttributionAnalyzer:
         plt.grid(True, alpha=0.3)
         plt.legend()
         plt.tight_layout()
-        plt.show()
+        plt.show()"""
 
     # ==========================================
     # FASE C: Caccia alle Feature (Il "Chi")

@@ -1,12 +1,10 @@
 import os
-import json
 import torch
 from pathlib import Path
 from typing import Union, Any
 from accelerate import PartialState
 from transformers import AutoTokenizer, AutoModelForCausalLM
 from transformers import BitsAndBytesConfig
-from model.InspectOutputContext import InspectOutputContext
 
 HF_DEFAULT_HOME = os.environ.get("HF_HOME", "~/.cache/huggingface/hub")
 
@@ -19,14 +17,14 @@ def get_weight_dir(
     subset=None,
 ) -> Path:
     """
-    Parse model name to locally stored weights.
+    Parse core name to locally stored weights.
     Args:
         model_ref (str) : Model reference containing org_name/model_name such as 'meta-llama/Llama-2-7b-chat-hf'.
         revision (str): Model revision branch. Defaults to 'main'.
         model_dir (str | os.PathLike[Any]): Path to directory where models are stored. Defaults to value of $HF_HOME (or present directory)
 
     Returns:
-        str: path to model weights within model directory
+        str: path to core weights within core directory
     """
     model_dir = Path(model_dir)
     assert model_dir.is_dir(), f"Model directory {model_dir} does not exist or is not a directory."
@@ -122,67 +120,4 @@ def build_messages(system_prompt, user_prompt, k=0, sample_user_prompts=[], assi
     return messages
 
 
-def save_generation_output(output_text, input_text, instance_id, save_dir):
-    if not os.path.exists(save_dir):
-        os.makedirs(save_dir)
-    
-    output_data = {
-        "instance_id": instance_id,
-        "input": input_text,
-        "generated_output": output_text,
-        "timestamp": str(torch.cuda.current_stream().query())
-    }
-    
-    save_path = os.path.join(save_dir, f"generation_{instance_id}.json")
-    with open(save_path, 'w', encoding='utf-8') as f:
-        json.dump(output_data, f, indent=2, ensure_ascii=False)
-    
-    return save_path
 
-
-def save_model_logits(logits, instance_id, save_dir):
-    if not os.path.exists(save_dir):
-        os.makedirs(save_dir)
-    
-    save_path = os.path.join(save_dir, f"logits_{instance_id}.pt")
-    torch.save(logits.cpu(), save_path)
-
-    return save_path
-
-
-def parse_layer_id_and_instance_id(s):
-    instance_idx = -1
-    layer_idx = -1
-
-    try:
-        layer_s, id_s = s.split("-")
-        layer_idx = int(layer_s[len("layer"):])
-        instance_idx = int(id_s[len("id"):-len(".pt")])
-    except Exception as e:
-        print(s)
-    return layer_idx, instance_idx
-
-
-def load_activations(
-        model_name="meta-llama/Meta-Llama-3-8B",
-        data_name="demo",
-        analyse_activation="hidden",
-        layer_idx=None,
-        results_dir="cache_data",
-):
-    model_name = model_name.split("/")[-1]
-
-    # Rimosso 'activation_type' dal path per allinearlo a combine_activations
-    base_dir = os.path.join(results_dir, model_name, data_name, f"activation_{analyse_activation}")
-
-    act_path = os.path.join(base_dir, f"layer{layer_idx}_activations.pt")
-    ids_path = os.path.join(base_dir, f"layer{layer_idx}_instance_ids.json")
-
-    if not os.path.exists(act_path) or not os.path.exists(ids_path):
-        raise FileNotFoundError(f"File mancanti per il layer {layer_idx} in {base_dir}")
-
-    instance_ids = json.load(open(ids_path, "r"))
-    # Carichiamo prima su CPU in modo sicuro, poi ci penserà il modello a gestire la memoria
-    activations = torch.load(act_path, map_location="cpu", weights_only=True)
-
-    return activations, instance_ids

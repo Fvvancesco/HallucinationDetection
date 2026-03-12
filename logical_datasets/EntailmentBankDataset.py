@@ -37,9 +37,10 @@ class EntailmentBankDataset(Dataset):
 
         return text, computed_label, instance_id
 
+
     def get_dataset(self, project_root: str) -> List[Dict]:
         all_data = []
-        data_dir = os.path.join(project_root, "data", "entailmentbank")
+        data_dir = os.path.join(project_root, "logical_datasets", "data", "entailmentbank")
 
         if not os.path.exists(data_dir):
             logger.warning(f"⚠️ Cartella dataset non trovata: {data_dir}")
@@ -51,6 +52,7 @@ class EntailmentBankDataset(Dataset):
                     all_data.extend([json.loads(s) for s in f])
 
         return all_data
+
 
     def format_dataset(self) -> pd.DataFrame:
         records = []
