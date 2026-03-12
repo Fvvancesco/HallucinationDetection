@@ -136,7 +136,11 @@ def run_train_probers(args: argparse.Namespace) -> None:
 
 def run_analyze(args: argparse.Namespace) -> None:
     """Avvia l'analizzatore di attribuzioni."""
+
     logger.info("🔍 Avvio Analizzatore di Attribuzioni...")
+
+    setup_huggingface_login()
+
     analyzer = AttributionAnalyzer(PROJECT_DIR, args.model_name, data_name=args.data_name, label=args.label)
 
     layers = range(32)  # Eventualmente dinamico se l'analyzer supporta l'Huggingface config
@@ -171,7 +175,7 @@ def main() -> None:
     parser.add_argument("--use_local", action="store_true")
     parser.add_argument("--data_name", type=str, default="beliefbank")
     parser.add_argument("--data_type", type=str, default="constraints", choices=["constraints", "facts"])
-    parser.add_argument("--label", type=int, default=0)
+    parser.add_argument("--label", type=str, default="1", help="Label del dataset (0, 1, o 'all')")
     parser.add_argument("--test_size", type=int, default=100)
     parser.add_argument("--batch_size", type=int, default=100000)
     parser.add_argument("--chunk_size", type=int, default=1000, help="Dimensione blocco per salvataggio RAM.")
@@ -179,6 +183,9 @@ def main() -> None:
     parser.add_argument("--run_all_prompts", action="store_true", help="Esegue la pipeline su tutti i prompt in sequenza")
 
     args = parser.parse_args()
+
+    if args.label.isdigit():
+        args.label = int(args.label)
 
     # Routing dinamico
     modes: Dict[str, Callable[[argparse.Namespace], None]] = {

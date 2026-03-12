@@ -1,85 +1,80 @@
 import os
+import json
 import logging
-import torch
-from typing import Union, Optional, Any
-
-from utils import Utils as ut
-from core.StorageManager import StorageManager
-from core.ActivationExtractor import ActivationExtractor
-from probing.ProberEvaluator import ProberEvaluator
-from logical_datasets.BeliefBankDataset import BeliefBankDataset
+import pandas as pd
+from typing import List, Dict, Tuple, Union
+from torch.utils.data import Dataset
 
 logger = logging.getLogger(__name__)
 
+class EntailmentBankDataset(Dataset):
+    LABELS: Dict[int, str] = {0: "no", 1: "yes"}
 
-class HallucinationPipeline:
-    def __init__(self, project_dir: str):
-        self.project_dir = project_dir
-        self.device = "cuda" if torch.cuda.is_available() else "cpu"
+    def __init__(self, project_root: str, label: Union[int, str] = "all", shuffle: bool = False) -> None:
+        self.label = label
+        self.all_data = self.get_dataset(project_root=project_root)
+        self.dataset = self.format_dataset()
+        if shuffle:
+            self.dataset = self.dataset.sample(frac=1).reset_index(drop=True)
 
-        # Stato dell'orchestratore
-        self.dataset = None
-        self.dataset_name = None
-        self.llm = None
-        self.tokenizer = None
-        self.llm_name = None
+    def __len__(self) -> int:
+        return len(self.dataset)
 
-        # Sotto-moduli
-        self.storage_manager = None
-        self.extractor = None
+    def __getitem__(self, idx: int) -> Tuple[str, str, int]:
+        item = self.dataset.iloc[idx]
+        instance_id = int(item['instance_id'])
+        text = item['text']
+        label_val = item['label']
+        computed_label = self.LABELS[label_val]
+        return text, computed_label, instance_id
 
-    def load_dataset(self, dataset_name: str, label: Union[int, str] = 1) -> None:
-        logger.info(f"Loading dataset {dataset_name}...")
-        self.dataset_name = dataset_name
-        if dataset_name in ["beliefbank", "belief"]:
-            self.dataset = BeliefBankDataset(project_root=self.project_dir, data_type="constraints", label=label)
-        elif dataset_name == "entailmentbank":
-            from logical_datasets.EntailmentBankDataset import EntailmentBankDataset
-            self.dataset = EntailmentBankDataset(project_root=self.project_dir, label=label)
-        else:
-            raise ValueError(f"Dataset {dataset_name} not supported.")
+    def get_sample(self, max_samples: int = 1):
+        self.dataset = self.dataset.iloc[:max_samples].reset_index(drop=True)
+        return self
 
-    def load_llm(self, llm_name: str, use_local: bool = False) -> None:
-        logger.info(f"Loading LLM {llm_name}...")
-        self.llm_name = llm_name
-        self.tokenizer = ut.load_tokenizer(llm_name, local=use_local)
-        self.llm = ut.load_llm(llm_name, ut.create_bnb_config(), local=use_local)
+    def get_dataset(self, project_root: str) -> List[Dict]:
+        all_data = []
+        data_dir = os.path.join(project_root, "logical_datasets", "data", "entailmentbank")
+        if not os.path.exists(data_dir):
+            logger.warning(f"⚠️ Cartella dataset non trovata: {data_dir}")
+            return all_data
+        for file in os.listdir(data_dir):
+            if file.endswith(".jsonl"):
+                with open(os.path.join(data_dir, file), 'r', encoding='utf-8') as f:
+                    all_data.extend([json.loads(s) for s in f])
+        return all_data
 
-        # Inizializziamo lo Storage Manager e l'Extractor ORA che abbiamo il modello!
-        num_layers = getattr(self.llm.config, "num_hidden_layers", 32)
-        target_layers = list(range(num_layers))
+    def format_dataset(self) -> pd.DataFrame:
+        records = []
+        all_hypotheses = [item["hypothesis"] for item in self.all_data]
+        shifted_hypotheses = all_hypotheses[1:] + [all_hypotheses[0]] if all_hypotheses else []
 
-        self.storage_manager = StorageManager(self.project_dir, self.llm_name, self.dataset_name, target_layers)
-        self.storage_manager.setup_directories()
+        for i, item in enumerate(self.all_data):
+            triples = item.get("meta", {}).get("triples", {})
+            premises = " ".join(triples.values())
 
-        self.extractor = ActivationExtractor(self.llm, self.tokenizer, self.dataset, self.storage_manager)
+            if self.label in [1, "all"]:
+                hypothesis_true = item["hypothesis"]
+                prompt_pos = f"Given these premises: {premises}\nIs the following hypothesis true: {hypothesis_true}?"
+                records.append({
+                    "original_id": f"{item['id']}_pos",
+                    "text": prompt_pos,
+                    "label": 1
+                })
 
-    def run_extraction(self, method_name: str, **kwargs) -> None:
-        """Delega dinamicamente l'estrazione all'Extractor."""
-        if not self.extractor:
-            raise RuntimeError("LLM e Dataset devono essere caricati prima dell'estrazione.")
+            if self.label in [0, "all"] and shifted_hypotheses:
+                hypothesis_false = shifted_hypotheses[i]
+                prompt_neg = f"Given these premises: {premises}\nIs the following hypothesis true: {hypothesis_false}?"
+                records.append({
+                    "original_id": f"{item['id']}_neg",
+                    "text": prompt_neg,
+                    "label": 0
+                })
 
-        try:
-            method_to_call = getattr(self.extractor, method_name)
-            method_to_call(**kwargs)
-        except AttributeError:
-            raise ValueError(f"Metodo {method_name} non trovato in ActivationExtractor.")
+        df = pd.DataFrame(records).drop_duplicates(subset=['original_id'])
+        # FIX FONDAMENTALE: Genera ID numerici progressivi (0, 1, 2, 3...)
+        df['instance_id'] = range(len(df))
+        return df
 
-    def train_probers(self, llm_name: str, test_size: float = 0.2, epochs: int = 30) -> None:
-        if not self.dataset:
-            raise RuntimeError("Il Dataset deve essere caricato prima di addestrare i prober.")
-
-        # Il prober non ha bisogno del LLM caricato in RAM, passiamo i layer
-        target_layers = self.extractor.target_layers if self.extractor else list(range(32))
-
-        evaluator = ProberEvaluator(self.project_dir, self.dataset, self.dataset_name, target_layers)
-        evaluator.train_and_evaluate_probers(llm_name=llm_name, test_size=test_size, epochs=epochs)
-
-    def predict_prober(self, target: str, layer: int, llm_name: str, label: int = 1) -> None:
-        """Usa il ProberEvaluator per fare inferenza su un layer specifico."""
-        if not self.dataset:
-            raise RuntimeError("Il Dataset deve essere caricato prima della predizione.")
-
-        target_layers = self.extractor.target_layers if self.extractor else list(range(32))
-        evaluator = ProberEvaluator(self.project_dir, self.dataset, self.dataset_name, target_layers)
-        evaluator.predict_prober(target=target, layer=layer, llm_name=llm_name, label=label)
+    def get_language_by_instance_id(self, instance_id: int) -> str:
+        return "EN"
