@@ -6,7 +6,9 @@ import matplotlib.pyplot as plt
 from typing import List, Tuple
 
 import utils.Utils as ut
+from config.prompts import PROMPT_REGISTRY
 from logical_datasets.BeliefBankDataset import BeliefBankDataset
+from logical_datasets.EntailmentBankDataset import EntailmentBankDataset
 
 
 class AttributionAnalyzer:
@@ -16,15 +18,27 @@ class AttributionAnalyzer:
     e la caccia alle singole feature (Chi).
     """
 
-    def __init__(self, project_dir: str, model_name: str, data_name: str = "beliefbank", label: int = 1):
+    def __init__(self, project_dir: str, model_name: str, data_name: str = "beliefbank", label: int = 1,
+                 prompt_id: str = "base_v1"):
         self.project_dir = project_dir
         self.model_name = model_name
+        self.data_name = data_name
+        self.prompt_id = prompt_id
         self.cache_dir = os.path.join(project_dir, "activation_cache")
         self.modules = ["hidden", "mlp", "attn"]
 
-        print("⏳ Caricamento Tokenizer e Dataset per l'analisi...")
+        print(f"⏳ Caricamento Tokenizer e Dataset ({data_name}) per l'analisi...")
         self.tokenizer = ut.load_tokenizer(model_name, local=False)
-        self.dataset = BeliefBankDataset(project_root=project_dir, data_type="constraints", label=label, shuffle=False)
+
+        # 3. FIX: Caricamento dinamico del dataset corretto
+        if self.data_name in ["beliefbank", "belief"]:
+            self.dataset = BeliefBankDataset(project_root=project_dir, data_type="constraints", label=label,
+                                             shuffle=False)
+        elif self.data_name == "entailmentbank":
+            self.dataset = EntailmentBankDataset(project_root=project_dir, label=label, shuffle=False)
+        else:
+            raise ValueError(f"Dataset {data_name} non supportato.")
+
         print("✅ Setup Analizzatore completato.")
 
     # ==========================================
@@ -32,17 +46,22 @@ class AttributionAnalyzer:
     # ==========================================
     def _get_tensor(self, module: str, layer: int, instance_id: int) -> torch.Tensor:
         """Carica il tensore di attribuzione [Sequenza, 4096] dal disco."""
-        file_path = os.path.join(self.cache_dir, f"attributions_{module}", f"layer{layer}-id{instance_id}.pt")
+
+        # 4. FIX: Costruzione del path corretto (Modello/Dataset/PromptID)
+        short_model_name = self.model_name.split("/")[-1]
+        file_path = os.path.join(self.cache_dir, short_model_name, self.data_name, self.prompt_id,
+                                 f"attributions_{module}", f"layer{layer}-id{instance_id}.pt")
+
         if not os.path.exists(file_path):
             raise FileNotFoundError(f"File non trovato: {file_path}. Assicurati di aver fatto l'estrazione.")
 
         # Ritorniamo il tensore in formato float32 per i calcoli analitici
         return torch.load(file_path, map_location="cpu", weights_only=False).float()
 
-    def _get_tokens_from_instance(self, instance_id: int) -> Tuple[str, List[str]]:
+    #def _get_tokens_from_instance(self, instance_id: int) -> Tuple[str, List[str]]:
         """Recupera la frase originale dal dataset e la scompone nei token testuali esatti."""
         # Trova la riga nel dataset originale
-        row = self.dataset.dataset[self.dataset.dataset['instance_id'] == instance_id]
+        """row = self.dataset.dataset[self.dataset.dataset['instance_id'] == instance_id]
         if row.empty:
             raise ValueError(f"Instance ID {instance_id} non trovato nel dataset.")
 
@@ -51,6 +70,47 @@ class AttributionAnalyzer:
         # Ricostruisce lo stesso identico prompt usato in HallucinationDetection, caricalo da un posto unificato...
         system_prompt = "You are a helpful assistant. Answer truthfully with only one word: TRUE or FALSE."
         user_prompt = f"Is the following statement true: {fact}?"
+        messages = ut.build_messages(system_prompt=system_prompt, user_prompt=user_prompt, k=0)
+
+        token_dict = self.tokenizer.apply_chat_template(
+            messages, tokenize=True, add_generation_prompt=True, return_tensors="pt", return_dict=True
+        )
+
+        input_ids = token_dict["input_ids"][0].tolist()
+
+        # Decodifica ogni singolo token ID in una stringa leggibile
+        token_strings = []
+        for tok_id in input_ids:
+            tok_str = self.tokenizer.decode([tok_id])
+            # Pulizia per evitare stringhe vuote o invisibili nei grafici
+            tok_str = tok_str.replace('\n', '\\n').strip()
+            if not tok_str:
+                tok_str = f"[{tok_id}]"
+            token_strings.append(tok_str)
+
+        return fact, token_strings"""
+
+    def _get_tokens_from_instance(self, instance_id: int) -> Tuple[str, List[str]]:
+        """Recupera la frase originale dal dataset e la scompone nei token testuali esatti."""
+        # Trova la riga nel dataset originale
+        row = self.dataset.dataset[self.dataset.dataset['instance_id'] == instance_id]
+        if row.empty:
+            raise ValueError(f"Instance ID {instance_id} non trovato nel dataset.")
+
+        # 1. FIX DATASET: EntailmentBank usa 'text', BeliefBank usa 'fact'
+        col_name = 'fact' if 'fact' in row.columns else 'text'
+        fact = row.iloc[0][col_name]
+
+        # 2. FIX PROMPTS: Recuperiamo il prompt corretto dal registro
+        prompt_data = PROMPT_REGISTRY.get(self.prompt_id, PROMPT_REGISTRY["base_v1"])
+
+        # Replica ESATTA della logica usata nell'ActivationExtractor
+        if self.data_name == "entailmentbank":
+            user_prompt = fact  # In entailmentbank è già tutto formattato
+        else:
+            user_prompt = prompt_data["user"].format(fact=fact)
+
+        system_prompt = prompt_data["system"]
         messages = ut.build_messages(system_prompt=system_prompt, user_prompt=user_prompt, k=0)
 
         token_dict = self.tokenizer.apply_chat_template(
