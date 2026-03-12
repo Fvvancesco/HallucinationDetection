@@ -91,5 +91,10 @@ class EntailmentBankDataset(Dataset):
 
         return pd.DataFrame(records).drop_duplicates(subset=['instance_id'])
 
+    def get_sample(self, max_samples: int = 1):
+        """Estrae un piccolo campione del dataset, utile per test veloci."""
+        self.dataset = self.dataset.iloc[:max_samples].reset_index(drop=True)
+        return self
+
     def get_language_by_instance_id(self, instance_id: str) -> str:
         return "EN"
