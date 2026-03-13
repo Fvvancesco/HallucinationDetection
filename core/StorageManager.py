@@ -176,44 +176,93 @@ class StorageManager:
                 save_path = os.path.join(act_dir, f"layer{layer_idx}_chunk{chunk_idx}.pt")
                 torch.save(stacked_acts, save_path)
 
-                if target == "hidden":
-                    ids_save_path = os.path.join(act_dir, f"layer{layer_idx}_ids_chunk{chunk_idx}.json")
-                    with open(ids_save_path, "w") as f:
-                        json.dump(self.instance_ids_buffer[layer_idx], f, indent=4)
+
+                ids_save_path = os.path.join(act_dir, f"layer{layer_idx}_ids_chunk{chunk_idx}.json")
+                with open(ids_save_path, "w") as f:
+                    json.dump(self.instance_ids_buffer[layer_idx], f, indent=4)
 
     def combine_activations(self, is_attribution: bool = False) -> None:
-        """Fonde i singoli file creati pre-allocando i tensori per prevenire OOM."""
+        """Fonde i singoli file (o i chunk) pre-allocando i tensori per prevenire OOM."""
         results_dir = os.path.join(self.project_dir, self.cache_dir_name)
         prefix = "attributions" if is_attribution else "activation"
 
         for aa in self.ACTIVATION_TARGETS:
-            #act_dir = os.path.join(results_dir, self.llm_name, self.dataset_name, f"{prefix}_{aa}")
             act_dir = os.path.join(results_dir, self.llm_name, self.dataset_name, self.prompt_id, f"{prefix}_{aa}")
             if not os.path.exists(act_dir): continue
 
-            act_files = [f for f in os.listdir(act_dir) if f.endswith(".pt") and len(f.split("-")) == 2]
-            layer_group_files: Dict[int, List[Tuple[str, int]]] = {lid: [] for lid in self.target_layers}
+            for layer_idx in self.target_layers:
+                # =========================================================
+                # 1. GESTIONE CHUNKS (Se hai usato save_activations_chunked)
+                # =========================================================
+                chunk_files = [f for f in os.listdir(act_dir) if
+                               f.startswith(f"layer{layer_idx}_chunk") and f.endswith(".pt")]
+                if chunk_files:
+                    # Ordiniamo i chunk per mantenere la sequenza (chunk0, chunk1...)
+                    chunk_files.sort(key=lambda x: int(x.split("chunk")[1].split(".")[0]))
 
-            for act_f in act_files:
-                layer_id, instance_id = self.parse_layer_id_and_instance_id(act_f)
-                layer_group_files[layer_id].append((act_f, instance_id))
+                    all_acts = []
+                    all_ids = []
 
-            for layer_id, files in layer_group_files.items():
-                if not files: continue
-                files.sort(key=lambda x: x[1])
+                    for cf in chunk_files:
+                        chunk_idx_str = cf.split("chunk")[1].split(".")[0]
 
-                loaded_paths = [os.path.join(act_dir, f[0]) for f in files]
-                instance_ids = [f[1] for f in files]
+                        # Carica tensori e concatenali
+                        acts = torch.load(os.path.join(act_dir, cf), map_location="cpu", weights_only=True)
+                        all_acts.append(acts)
 
-                first_tensor = torch.load(loaded_paths[0], map_location="cpu", weights_only=True)
-                combined_acts = torch.empty((len(files), *first_tensor.shape), dtype=first_tensor.dtype, device="cpu")
+                        # Carica gli ID corrispondenti
+                        id_file = f"layer{layer_idx}_ids_chunk{chunk_idx_str}.json"
+                        id_path = os.path.join(act_dir, id_file)
+                        if os.path.exists(id_path):
+                            with open(id_path, "r") as f:
+                                all_ids.extend(json.load(f))
 
-                for idx, path_to_load in enumerate(loaded_paths):
-                    combined_acts[idx] = torch.load(path_to_load, map_location="cpu", weights_only=True)
+                        # Rimuovi i chunk e i json dal disco man mano per fare pulizia
+                        os.remove(os.path.join(act_dir, cf))
+                        if os.path.exists(id_path):
+                            os.remove(id_path)
 
-                torch.save(combined_acts, os.path.join(act_dir, f"layer{layer_id}_activations.pt"))
-                with open(os.path.join(act_dir, f"layer{layer_id}_instance_ids.json"), "w") as f:
-                    json.dump(instance_ids, f, indent=4)
+                    # Salva il file unificato che il Prober si aspetta
+                    if all_acts:
+                        combined_acts = torch.cat(all_acts, dim=0)
+                        torch.save(combined_acts, os.path.join(act_dir, f"layer{layer_idx}_activations.pt"))
+                    if all_ids:
+                        with open(os.path.join(act_dir, f"layer{layer_idx}_instance_ids.json"), "w") as f:
+                            json.dump(all_ids, f, indent=4)
 
-                for p in loaded_paths:
-                    os.remove(p)
+                    continue  # Finito con questo layer per i chunk!
+
+                # =========================================================
+                # 2. GESTIONE FILE SINGOLI (Se hai usato save_activations base)
+                # =========================================================
+                act_files = [f for f in os.listdir(act_dir) if
+                             f.startswith(f"layer{layer_idx}-id") and f.endswith(".pt")]
+                if not act_files:
+                    continue
+
+                # Estrai (nome_file, instance_id)
+                files_with_ids = []
+                for f in act_files:
+                    try:
+                        _, iid = self.parse_layer_id_and_instance_id(f)
+                        files_with_ids.append((f, iid))
+                    except Exception:
+                        pass
+
+                files_with_ids.sort(key=lambda x: x[1])  # Ordina per ID crescente
+
+                if files_with_ids:
+                    loaded_paths = [os.path.join(act_dir, f[0]) for f in files_with_ids]
+                    instance_ids = [f[1] for f in files_with_ids]
+
+                    first_tensor = torch.load(loaded_paths[0], map_location="cpu", weights_only=True)
+                    combined_acts = torch.empty((len(files_with_ids), *first_tensor.shape), dtype=first_tensor.dtype,
+                                                device="cpu")
+
+                    for idx, path_to_load in enumerate(loaded_paths):
+                        combined_acts[idx] = torch.load(path_to_load, map_location="cpu", weights_only=True)
+                        os.remove(path_to_load)  # Pulisci file singolo
+
+                    torch.save(combined_acts, os.path.join(act_dir, f"layer{layer_idx}_activations.pt"))
+                    with open(os.path.join(act_dir, f"layer{layer_idx}_instance_ids.json"), "w") as f:
+                        json.dump(instance_ids, f, indent=4)
