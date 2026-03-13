@@ -25,6 +25,7 @@ class ProberEvaluator:
         self.target_layers = target_layers
         self.random_seed = random_seed
         self.cache_dir_name = cache_dir_name
+        self.prompt_id = prompt_id
 
         # Nuove costanti locali per le directory di predizione
         self.prediction_dir = "predictions"
@@ -110,7 +111,9 @@ class ProberEvaluator:
             data_name=self.dataset_name,
             analyse_activation=target,
             layer_idx=layer,
-            results_dir=os.path.join(self.project_dir, self.cache_dir_name))
+            results_dir=os.path.join(self.project_dir, self.cache_dir_name),
+            prompt_id=self.prompt_id
+        )
 
         preds = [
             {

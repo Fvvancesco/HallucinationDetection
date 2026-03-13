@@ -187,7 +187,8 @@ class StorageManager:
         prefix = "attributions" if is_attribution else "activation"
 
         for aa in self.ACTIVATION_TARGETS:
-            act_dir = os.path.join(results_dir, self.llm_name, self.dataset_name, f"{prefix}_{aa}")
+            #act_dir = os.path.join(results_dir, self.llm_name, self.dataset_name, f"{prefix}_{aa}")
+            act_dir = os.path.join(results_dir, self.llm_name, self.dataset_name, self.prompt_id, f"{prefix}_{aa}")
             if not os.path.exists(act_dir): continue
 
             act_files = [f for f in os.listdir(act_dir) if f.endswith(".pt") and len(f.split("-")) == 2]
