@@ -6,8 +6,10 @@ from typing import List, Dict, Tuple, Optional, Any
 from sklearn.model_selection import train_test_split
 
 from probing.LinearProber import LinearProber
-from utils import Utils as ut
 from analysis.VisualisationUtils import VisualisationUtils
+from core.StorageManager import StorageManager
+
+
 
 logger = logging.getLogger(__name__)
 
@@ -16,7 +18,7 @@ class ProberEvaluator:
     ACTIVATION_TARGETS = ["hidden", "mlp", "attn"]
 
     def __init__(self, project_dir: str, dataset: Any, dataset_name: str, target_layers: List[int],
-                 random_seed: int = 42, cache_dir_name: str = "activation_cache"):
+                 random_seed: int = 42, cache_dir_name: str = "activation_cache", prompt_id: str = "base_v1"):
         self.project_dir = project_dir
         self.dataset = dataset
         self.dataset_name = dataset_name
@@ -101,13 +103,12 @@ class ProberEvaluator:
         prober_model = LinearProber(self.project_dir, activation=target, layer=layer, load_pretrained=True)
         llm_short_name = llm_name.split("/")[-1]
 
-        activations, instance_ids = ut.load_activations(
+        activations, instance_ids = StorageManager.load_activations(
             model_name=llm_short_name,
             data_name=self.dataset_name,
             analyse_activation=target,
             layer_idx=layer,
-            results_dir=os.path.join(self.project_dir, self.cache_dir_name)
-        )
+            results_dir=os.path.join(self.project_dir, self.cache_dir_name))
 
         preds = [
             {

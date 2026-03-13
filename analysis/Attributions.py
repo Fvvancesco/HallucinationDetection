@@ -160,11 +160,6 @@ class AttributionAnalyzer:
     # ==========================================
     # FASE B: Il "Dove" (Profilo dei Layer)
     # ==========================================
-    import numpy as np
-    import pandas as pd
-    import torch
-    import matplotlib.pyplot as plt
-
     def plot_layer_profile(self, instance_id: int, total_layers: int = 32):
         """
         Analisi XAI: individua il range energetico (Max-Min) e il layer di massimo

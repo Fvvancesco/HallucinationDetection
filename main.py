@@ -23,6 +23,7 @@ logger = logging.getLogger(__name__)
 
 PROJECT_DIR = os.path.dirname(os.path.abspath(__file__))
 
+
 def setup_huggingface_login() -> None:
     """Esegue il login su HuggingFace in modo sicuro."""
     os.environ["HF_HUB_DISABLE_SYMLINKS_WARNING"] = "1"
@@ -47,7 +48,11 @@ def setup_pipeline(args: argparse.Namespace, current_prompt_id=None, require_llm
     p_id = current_prompt_id or args.prompt_id
 
     pipeline = HallucinationPipeline(project_dir=PROJECT_DIR)
-    pipeline.load_dataset(dataset_name=args.data_name, label=args.label)
+
+    # Preveniamo bug logici con la label se il dataset è beliefbank
+    sicuro_label = args.label if args.data_name == "entailmentbank" else (
+        args.label if isinstance(args.label, int) else 1)
+    pipeline.load_dataset(dataset_name=args.data_name, label=sicuro_label)
 
     if args.test_size > 0:
         pipeline.dataset.get_sample(max_samples=args.test_size)
@@ -71,9 +76,11 @@ def test_dataset(args: argparse.Namespace) -> None:
                 shuffle=True
             )
         else:
+            # FIX: Evitiamo che "all" causi l'inversione delle etichette (1-label)
+            bb_label = args.label if isinstance(args.label, int) else 1
             dataset = BeliefBankDataset(
                 project_root=PROJECT_DIR, recreate_ids=True,
-                data_type=args.data_type, label=args.label, shuffle=True
+                data_type=args.data_type, label=bb_label, shuffle=True
             )
 
         logger.info(f"✅ Dataset caricato con successo! Elementi totali: {len(dataset)}")
@@ -90,6 +97,7 @@ def test_dataset(args: argparse.Namespace) -> None:
     except Exception as e:
         logger.error(f"❌ Errore durante il test del dataset: {e}", exc_info=True)
 
+
 def run_extraction(args: argparse.Namespace, method_name: str, success_msg: str, **kwargs: Any) -> None:
     """Esegue un metodo di estrazione dinamico sulla pipeline."""
     pipeline = setup_pipeline(args, require_llm=True)
@@ -102,6 +110,7 @@ def run_extraction(args: argparse.Namespace, method_name: str, success_msg: str,
     except Exception as e:
         logger.error(f"❌ Errore durante l'estrazione: {e}", exc_info=True)
 
+
 def run_probing_only(args: argparse.Namespace) -> None:
     """Esegue solo la fase di probing su attivazioni già estratte."""
     pipeline = setup_pipeline(args, require_llm=False)
@@ -109,44 +118,61 @@ def run_probing_only(args: argparse.Namespace) -> None:
 
     logger.info(f"🚀 Avvio Probing per il modello: {llm_short_name}")
 
-    # Fallback su default se llm non è caricato
     targets = ["hidden", "mlp", "attn"]
     layers = range(32)
 
     for target in targets:
         for layer in layers:
             try:
-                pipeline.predict_prober(target=target, layer=layer, llm_name=llm_short_name, label=args.label)
+                # FIX: Aggiunto prompt_id per evitare di ricascare in default ("base_v1")
+                sicuro_label = args.label if isinstance(args.label, int) else 1
+                pipeline.predict_prober(target=target, layer=layer, llm_name=llm_short_name, prompt_id=args.prompt_id,
+                                        label=sicuro_label)
             except FileNotFoundError:
                 logger.warning(f"⚠️ Modello di probing non trovato per target {target}, layer {layer}. Salto...")
             except Exception as e:
                 logger.error(f"❌ Errore al layer {layer} con target {target}: {e}")
 
+
 def run_train_probers(args: argparse.Namespace) -> None:
     """Avvia l'addestramento dei probing."""
     pipeline = setup_pipeline(args, require_llm=False)
     logger.info("⚙️ Avvio addestramento e valutazione probers...")
-    pipeline.train_probers(llm_name=args.model_name, test_size=0.2, epochs=30)
+    pipeline.train_probers(llm_name=args.model_name, prompt_id=args.prompt_id, test_size=0.2, epochs=30)
+
 
 def run_analyze(args: argparse.Namespace) -> None:
     """Avvia l'analizzatore di attribuzioni."""
 
     logger.info("🔍 Avvio Analizzatore di Attribuzioni...")
-
     setup_huggingface_login()
 
-    analyzer = AttributionAnalyzer(PROJECT_DIR, args.model_name, data_name=args.data_name, label=args.label)
+    sicuro_label = args.label if isinstance(args.label, int) else 1
 
-    layers = range(32)  # Eventualmente dinamico se l'analyzer supporta l'Huggingface config
-    logger.info(f"📊 Generazione profili per {len(layers)} layers...")
+    # FIX: Passato esplicitamente il prompt_id per evitare FileNotFoundError
+    analyzer = AttributionAnalyzer(
+        PROJECT_DIR,
+        args.model_name,
+        data_name=args.data_name,
+        label=sicuro_label,
+        prompt_id=args.prompt_id
+    )
 
+    logger.info("📊 Generazione profilo energetico globale (Dove)...")
     analyzer.plot_layer_profile(args.instance_id)
-    for i in layers:
-        analyzer.plot_word_barh(args.instance_id, module="attn", layer=i)
-        analyzer.plot_word_heatmap(args.instance_id, module="attn", layer=i)
-        analyzer.plot_text_saliency(args.instance_id, module="hidden", layer=i)
-        for module in ["attn", "mlp", "hidden"]:
-            analyzer.hunt_top_dimensions(args.instance_id, module=module, layer=i, top_k=5)
+
+    # FIX: Limitiamo la generazione dei grafici puntuali (Quando/Chi) a un singolo layer passato in input.
+    # Questo previene l'apertura in sequenza di ~100 finestre di matplotlib, che blocca tutto lo script.
+    l_target = args.layer
+    logger.info(f"🔎 Generazione grafici di dettaglio per il singolo Layer {l_target}...")
+
+    analyzer.plot_word_barh(args.instance_id, module="attn", layer=l_target)
+    analyzer.plot_word_heatmap(args.instance_id, module="attn", layer=l_target)
+    analyzer.plot_text_saliency(args.instance_id, module="hidden", layer=l_target)
+
+    for module in ["attn", "mlp", "hidden"]:
+        analyzer.hunt_top_dimensions(args.instance_id, module=module, layer=l_target, top_k=5)
+
     logger.info("✅ Analisi completata.")
 
 
@@ -174,12 +200,14 @@ def main() -> None:
     parser.add_argument("--batch_size", type=int, default=100000)
     parser.add_argument("--chunk_size", type=int, default=1000, help="Dimensione blocco per salvataggio RAM.")
     parser.add_argument("--prompt_id", type=str, default="base_v1", help="ID del prompt dal registry")
+    parser.add_argument("--layer", type=int, default=31, help="Layer target per l'analisi visiva singola (0-31)")  # FIX
     parser.add_argument("--run_all_prompts", action="store_true", help="Esegue la pipeline su tutti i prompt in sequenza")
     parser.add_argument("--attribution_metric", type=str, default="hallucination",
                         choices=["hallucination", "true_vs_false"], help="Metrica per il calcolo dei gradienti")
 
     args = parser.parse_args()
 
+    # Mappatura corretta della label
     if args.label.isdigit():
         args.label = int(args.label)
 
