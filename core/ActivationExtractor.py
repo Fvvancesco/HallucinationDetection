@@ -129,6 +129,8 @@ class ActivationExtractor:
         if items_in_buffer > 0:
             self.storage_manager.flush_buffer_to_disk(chunk_idx, prefix="activation")
 
+        self.storage_manager.combine_activations(is_attribution=False)
+
     def save_attributions_and_grads(self, metric_type: str = "hallucination") -> None:
         logger.info(f"{'--' * 25} Saving Attributions [{metric_type.upper()}] {'--' * 25}")
         torch.set_grad_enabled(True)

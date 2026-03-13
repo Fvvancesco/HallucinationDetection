@@ -84,10 +84,11 @@ class StorageManager:
         return layer_idx, instance_idx
 
     @staticmethod
-    def load_activations(model_name: str, data_name: str, analyse_activation: str, layer_idx: int, results_dir: str) -> \
+    def load_activations(model_name: str, data_name: str, prompt_id: str, analyse_activation: str, layer_idx: int, results_dir: str) -> \
     Tuple[torch.Tensor, List[int]]:
         model_name = model_name.split("/")[-1]
-        base_dir = os.path.join(results_dir, model_name, data_name, f"activation_{analyse_activation}")
+        #base_dir = os.path.join(results_dir, model_name, data_name, f"activation_{analyse_activation}")
+        base_dir = os.path.join(results_dir, model_name, data_name, prompt_id, f"activation_{analyse_activation}")
 
         act_path = os.path.join(base_dir, f"layer{layer_idx}_activations.pt")
         ids_path = os.path.join(base_dir, f"layer{layer_idx}_instance_ids.json")
@@ -158,7 +159,9 @@ class StorageManager:
     def flush_buffer_to_disk(self, chunk_idx: int, prefix: str = "activation") -> None:
         """Prende tutto ciò che è in RAM, fa lo stack e salva il chunk su disco."""
         logger.info(f"Saving chunk {chunk_idx} to disk...")
-        results_dir = os.path.join(self.project_dir, self.cache_dir_name, self.llm_name, self.dataset_name)
+        #results_dir = os.path.join(self.project_dir, self.cache_dir_name, self.llm_name, self.dataset_name)
+        results_dir = os.path.join(self.project_dir, self.cache_dir_name, self.llm_name, self.dataset_name,
+                                   self.prompt_id)
 
         for target in self.ACTIVATION_TARGETS:
             dir_name = f"{prefix}_{target}"

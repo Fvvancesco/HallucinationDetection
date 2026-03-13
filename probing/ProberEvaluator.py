@@ -30,7 +30,7 @@ class ProberEvaluator:
         self.prediction_dir = "predictions"
         self.predictions_file_name = "predictions_layer{layer}.jsonl"
 
-    def train_and_evaluate_probers(self, llm_name: str, test_size: float = 0.2, epochs: int = 30) -> None:
+    def train_and_evaluate_probers(self, llm_name: str, test_size: float = 0.2, prompt_id: str = "base_v1", epochs: int = 30) -> None:
         logger.info("\n" + "=" * 50 + "\n🛠️ Avvio Addestramento Probers (Hallucination Detection)\n" + "=" * 50)
 
         if not self.dataset:
@@ -39,8 +39,8 @@ class ProberEvaluator:
         id_to_label = {iid: label for _, label, iid in self.dataset}
 
         llm_short_name = llm_name.split("/")[-1]
-        generations_dir = os.path.join(self.project_dir, self.cache_dir_name, llm_short_name, self.dataset_name,
-                                       "generations")
+        #generations_dir = os.path.join(self.project_dir, self.cache_dir_name, llm_short_name, self.dataset_name, "generations")
+        generations_dir = os.path.join(self.project_dir, self.cache_dir_name, llm_short_name, self.dataset_name, prompt_id, "generations")
 
         # Mapping: 1.0 = Allucinazione, 0.0 = Corretta
         id_to_hallucination: Dict[int, float] = {}
@@ -55,7 +55,9 @@ class ProberEvaluator:
                 id_to_hallucination[iid] = 0.0
 
         metrics_results: List[Dict[str, Any]] = []
-        base_results_dir = os.path.join(self.project_dir, self.cache_dir_name, llm_short_name, self.dataset_name)
+        #base_results_dir = os.path.join(self.project_dir, self.cache_dir_name, llm_short_name, self.dataset_name)
+        base_results_dir = os.path.join(self.project_dir, self.cache_dir_name, llm_short_name, self.dataset_name,
+                                        prompt_id)
 
         for target in self.ACTIVATION_TARGETS:
             logger.info(f"\n--- Training su {target.upper()} ---")
