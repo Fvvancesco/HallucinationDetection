@@ -32,6 +32,9 @@ class HallucinationPipeline:
         elif dataset_name == "entailmentbank":
             from logical_datasets.EntailmentBankDataset import EntailmentBankDataset
             self.dataset = EntailmentBankDataset(project_root=self.project_dir, label=label)
+        elif dataset_name in ["logic"]:
+            from logical_datasets.LogicDataset import LogicDataset
+            self.dataset = LogicDataset(project_root=self.project_dir, max_samples_per_type=200)
         else:
             raise ValueError(f"Dataset {dataset_name} not supported.")
 

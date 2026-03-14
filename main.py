@@ -22,6 +22,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 PROJECT_DIR = os.path.dirname(os.path.abspath(__file__))
+CONSOLE_LENGTH = 150 #80 is default
 
 
 def setup_huggingface_login() -> None:
@@ -75,13 +76,25 @@ def test_dataset(args: argparse.Namespace) -> None:
                 label=args.label if args.label in [0, 1] else "all",
                 shuffle=True
             )
-        else:
+        elif args.data_name == "beliefbank":
             # FIX: Evitiamo che "all" causi l'inversione delle etichette (1-label)
             bb_label = args.label if isinstance(args.label, int) else 1
             dataset = BeliefBankDataset(
                 project_root=PROJECT_DIR, recreate_ids=True,
                 data_type=args.data_type, label=bb_label, shuffle=True
             )
+        elif args.data_name == "logic":
+            # 1. Inizializza la pipeline
+            pipeline = HallucinationPipeline(PROJECT_DIR)
+
+            # 2. Carica il dataset dinamicamente usando il nome passato da riga di comando
+            try:
+                pipeline.load_dataset(args.data_name)
+            except Exception as e:
+                logger.error(f"Errore nel caricamento del dataset: {e}")
+                return
+
+            dataset = pipeline.dataset
 
         logger.info(f"✅ Dataset caricato con successo! Elementi totali: {len(dataset)}")
         fact, label, instance_id = dataset[0]
@@ -92,7 +105,7 @@ def test_dataset(args: argparse.Namespace) -> None:
         batch_facts, batch_labels, batch_ids = next(iter(dataloader))
 
         for i in range(min(args.batch_size, len(batch_facts))):
-            logger.info(f"[{batch_ids[i]}] {batch_facts[i][:80]}... --> {batch_labels[i]}")
+            logger.info(f"[{batch_ids[i]}] {batch_facts[i][:CONSOLE_LENGTH]}... --> {batch_labels[i]}")
 
     except Exception as e:
         logger.error(f"❌ Errore durante il test del dataset: {e}", exc_info=True)
