@@ -5,6 +5,12 @@
 # parte della nuova parola generata dopo un a-capo o un colon.
 
 PROMPT_REGISTRY = {
+    "base_v1": {  # Aggiungi questa chiave
+            "system": "You are a precise reasoning engine. Answer the question at the end with only 'Yes' or 'No'.",
+            "user": "{fact}",
+            "pos_token": " Yes",
+            "neg_token": " No"
+        },
     # ==========================================
     # 1. FORMATI STANDARD (Basi solide)
     # ==========================================
