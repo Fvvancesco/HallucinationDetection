@@ -13,7 +13,7 @@ class EntailmentBankDataset(Dataset):
     LABELS: Dict[int, str] = {0: "no", 1: "yes"}
 
     def __init__(self, project_root: str, label: Union[int, str] = "all", shuffle: bool = False,
-                 neg_strategy: str = "negate") -> None:
+                 neg_strategy: str = "distractor_injection") -> None:
         """
         Strategie mirate per l'analisi delle allucinazioni logiche:
         - "negate": Usa spaCy (NLP) per una negazione grammaticalmente perfetta del verbo principale.
