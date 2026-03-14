@@ -166,9 +166,24 @@ class LogicDataset(Dataset):
     def __len__(self) -> int:
         return len(self.all_data)
 
+    """
     def __getitem__(self, idx: int) -> Tuple[str, str, int]:
         item = self.all_data[idx]
         # Formatta il testo in modo simile a EntailmentBank
         prompt_text = f"Given these premises: {item['context']}\n{item['question']}"
         label = item['target'].lower()  # "yes" o "no"
+        return prompt_text, label, idx
+    """
+
+    # In LogicDataset.py
+    def __getitem__(self, idx: int) -> Tuple[str, str, int]:
+        # Se self.all_data è un DataFrame, usa .iloc per le righe
+        if hasattr(self.all_data, 'iloc'):
+            item = self.all_data.iloc[idx]
+        else:
+            # Se è rimasta una lista
+            item = self.all_data[idx]
+
+        prompt_text = f"Given these premises: {item['context']}\n{item['question']}"
+        label = item['target'].lower()
         return prompt_text, label, idx
