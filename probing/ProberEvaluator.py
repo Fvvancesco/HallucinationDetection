@@ -82,10 +82,25 @@ class ProberEvaluator:
                         layer_idx=layer,
                         results_dir=os.path.join(self.project_dir, self.cache_dir_name)
                     )
-                except FileNotFoundError:
+                except FileNotFoundError as e:
+                    # AGGIUNGI QUESTO LOG
+                    logger.debug(f"Layer {layer} [{target}]: File non trovato. Percorso: {e.filename}")
                     continue
 
+                valid_mask = [i for i, iid in enumerate(instance_ids) if iid in id_to_label]
+
+                if not valid_mask:
+                    logger.warning(f"Layer {layer} [{target}]: Nessun ID corrispondente trovato nel dataset. Salto...")
+                    continue
+
+                    # Filtra i tensori delle attivazioni e la lista degli ID
+                activations = activations[valid_mask]
+                instance_ids = [instance_ids[i] for i in valid_mask]
+
+                # Ora la creazione del tensore labels non fallirà MAI, anche se la cache è sporca
                 labels = torch.tensor([id_to_label[iid] for iid in instance_ids], dtype=torch.float32)
+
+                #labels = torch.tensor([id_to_label[iid] for iid in instance_ids], dtype=torch.float32)
                 ids_tensor = torch.tensor(instance_ids, dtype=torch.int32)  # Tensorizziamo gli ID
 
                 if use_undersampling:

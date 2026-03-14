@@ -22,7 +22,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 PROJECT_DIR = os.path.dirname(os.path.abspath(__file__))
-CONSOLE_LENGTH = 150 #80 is default
+CONSOLE_LENGTH = 500 #80 is default
 
 
 def setup_huggingface_login() -> None:

@@ -134,6 +134,8 @@ class StorageManager:
 
     def bufferize_tensors(self, catcher: Dict[str, Any], instance_id: int, is_attribution: bool = False) -> None:
         """Salva i tensori nel dizionario in RAM pre-processandoli."""
+        layer_recorded = set()
+
         for module, tensor in catcher.items():
             if tensor is None or (is_attribution and getattr(tensor, 'grad', None) is None):
                 continue
@@ -154,7 +156,10 @@ class StorageManager:
                 self.activation_buffer["attn"][layer_idx].append(tensor_to_save)
             else:
                 self.activation_buffer["hidden"][layer_idx].append(tensor_to_save)
+                #self.instance_ids_buffer[layer_idx].append(instance_id)
+            if layer_idx not in layer_recorded:
                 self.instance_ids_buffer[layer_idx].append(instance_id)
+                layer_recorded.add(layer_idx)
 
     def flush_buffer_to_disk(self, chunk_idx: int, prefix: str = "activation") -> None:
         """Prende tutto ciò che è in RAM, fa lo stack e salva il chunk su disco."""
