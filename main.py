@@ -188,14 +188,34 @@ def run_analyze(args: argparse.Namespace) -> None:
 
     logger.info("✅ Analisi completata.")
 
-
 def run_full_pipeline(args: argparse.Namespace) -> None:
-    """Esegue estrazione chunked e probing completo."""
+    """Esegue estrazione e training usando la stessa istanza della pipeline."""
     logger.info("Inizio esecuzione Full Pipeline...")
-    run_extraction(args, method_name="save_activations_chunked",
+
+    # 1. Setup unico della pipeline
+    pipeline = setup_pipeline(args, require_llm=True)
+
+    # 2. Estrazione attivazioni usando direttamente l'oggetto pipeline
+    logger.info("🧠 Fase 1: Estrazione attivazioni...")
+    pipeline.run_extraction(
+        method_name="save_activations_chunked",
+        use_chat_template=True,
+        chunk_size=args.chunk_size
+    )
+
+    # 3. Training probers sulla STESSA pipeline (stesso dataset in memoria)
+    logger.info("⚙️ Fase 2: Addestramento probers...")
+    pipeline.train_probers(
+        llm_name=args.model_name,
+        prompt_id=args.prompt_id,
+        test_size=0.2,
+        epochs=30
+    )
+    #logger.info("Inizio esecuzione Full Pipeline...")
+    """run_extraction(args, method_name="save_activations_chunked",
                    success_msg="Estrazione Chunked completata!",
                    use_chat_template=True, chunk_size=args.chunk_size)
-    run_train_probers(args)
+    run_train_probers(args)"""
 
 
 def main() -> None:
