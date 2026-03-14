@@ -79,9 +79,12 @@ class LinearProber:
 
         return acc
 
-    def train(self, X_train, y_train, X_val, y_val, epochs=50, lr=1e-3, batch_size=64):
+    def train(self, X_train, y_train, X_val, y_val, epochs=50, lr=1e-3, batch_size=64, pos_weight=None, tune_wd=True):
         """Addestra il probing e calcola l'accuracy sul validation set con Regolarizzazione."""
-        criterion = nn.BCELoss()
+        weight_tensor = torch.tensor([pos_weight], device=X_train.device) if pos_weight else None
+        criterion = nn.BCEWithLogitsLoss(pos_weight=weight_tensor)
+
+        #criterion = nn.BCELoss()
 
         # Usiamo AdamW con un forte Weight Decay (L2 Regularization)
         # Questo impedisce al probing di overfittare le 4096 dimensioni.
@@ -106,7 +109,11 @@ class LinearProber:
             val_preds = (val_outputs > 0.5).float()
             acc = accuracy_score(y_val.cpu(), val_preds.cpu())
 
-        return acc
+        return {
+            "accuracy": acc,
+            "probabilities": val_outputs.detach().cpu().numpy(),
+            "best_wd": 0.01
+        }
 
     def save_model(self):
         """Salva i pesi addestrati."""

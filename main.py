@@ -243,11 +243,12 @@ def main() -> None:
     }
 
     try:
-        modes[args.mode](args)
-    except KeyError:
-        logger.error(f"Modalità '{args.mode}' non supportata.")
+        if args.mode in modes:
+            modes[args.mode](args)
+        else:
+            logger.error(f"Modalità '{args.mode}' non supportata.")
     except Exception as e:
-        logger.critical(f"Errore critico non gestito nell'esecuzione di {args.mode}: {e}", exc_info=True)
+        logger.critical(f"💥 ERRORE CRITICO: {type(e).__name__}: {e}", exc_info=True)
 
 
 if __name__ == "__main__":
