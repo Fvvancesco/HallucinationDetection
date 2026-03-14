@@ -43,6 +43,15 @@ class EntailmentBankDataset(Dataset):
         item = self.dataset.iloc[idx]
         return item['text'], self.LABELS[item['label']], int(item['instance_id'])
 
+    def get_sample(self, max_samples: int) -> None:
+        """Riduce il dataset a un numero massimo di campioni per il testing."""
+        if max_samples < len(self.dataset):
+            logger.info(f"Campionamento del dataset: da {len(self.dataset)} a {max_samples} campioni.")
+            self.dataset = self.dataset.sample(n=max_samples).reset_index(drop=True)
+        else:
+            logger.info(
+                f"Il dataset ha {len(self.dataset)} campioni, richiesti {max_samples}. Nessun campionamento necessario.")
+
     def get_dataset(self, project_root: str) -> List[Dict]:
         all_data = []
         data_dir = os.path.join(project_root, "logical_datasets", "data", "entailmentbank")
