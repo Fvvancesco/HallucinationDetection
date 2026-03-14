@@ -4,6 +4,7 @@ import random
 import logging
 from collections import defaultdict
 
+import numpy as np
 import pandas as pd
 from torch.utils.data import Dataset
 from typing import Tuple
@@ -12,8 +13,11 @@ logger = logging.getLogger(__name__)
 
 
 class LogicDataset(Dataset):
-    def __init__(self, project_root: str, max_samples_per_type: int = 100, shuffle: bool = True):
+    def __init__(self, project_root: str, max_samples_per_type: int = 100, shuffle: bool = False):
         self.project_root = project_root
+
+        random.seed(42)
+        np.random.seed(42)
 
         # Percorsi base (Adattati alla tua struttura cartelle)
         bb_dir = os.path.join(project_root, "logical_datasets", "data", "beliefbank")
