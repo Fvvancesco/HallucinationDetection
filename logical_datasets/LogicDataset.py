@@ -3,6 +3,8 @@ import json
 import random
 import logging
 from collections import defaultdict
+
+import pandas as pd
 from torch.utils.data import Dataset
 from typing import Tuple
 
@@ -48,6 +50,8 @@ class LogicDataset(Dataset):
         self.all_data = self._generate_dataset(max_samples_per_type)
         if shuffle:
             random.shuffle(self.all_data)
+
+        self.all_data = pd.DataFrame(self.all_data)
         logger.info(f"Dataset Logic generato con {len(self.all_data)} campioni.")
 
     # --- METODI DEL GENERATORE CHE HAI SCRITTO ---
