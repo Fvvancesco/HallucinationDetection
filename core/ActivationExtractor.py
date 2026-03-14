@@ -143,7 +143,7 @@ class ActivationExtractor:
 
         module_names = self._get_target_modules()
 
-        # 1. I token bersaglio ora vengono letti dinamicamente!
+        # I token bersaglio vengono letti dinamicamente!
         pos_id = self.tokenizer.encode(self.pos_token_str, add_special_tokens=False)[-1]
         neg_id = self.tokenizer.encode(self.neg_token_str, add_special_tokens=False)[-1]
 
@@ -153,14 +153,14 @@ class ActivationExtractor:
             "attn": self.storage_manager.dirs["attr_attn"]
         }
 
-        # 2. DEFINIZIONE DELLE METRICHE COME FUNZIONI (lambda)
+        #DEFINIZIONE DELLE METRICHE COME FUNZIONI (lambda)
         # Ogni metrica riceve: i logits(tensor), l'id positivo, l'id negativo, e la verità (label)
         metrics_dict = {
-            "hallucination": lambda logits, p, n, label: (
-                (logits[0, -1, n] - logits[0, -1, p]) if str(label).lower() == "yes"
+            "hallucination": lambda logits, p, n, ground_truth: (
+                (logits[0, -1, n] - logits[0, -1, p]) if str(ground_truth).lower() == "yes"
                 else (logits[0, -1, p] - logits[0, -1, n])
             ),
-            "true_vs_false": lambda logits, p, n, label: (
+            "true_vs_false": lambda logits, p, n, ground_truth: (
                     logits[0, -1, p] - logits[0, -1, n]
             )
         }
