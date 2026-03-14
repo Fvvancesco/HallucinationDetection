@@ -123,6 +123,14 @@ def run_extraction(args: argparse.Namespace, method_name: str, success_msg: str,
     except Exception as e:
         logger.error(f"❌ Errore durante l'estrazione: {e}", exc_info=True)
 
+from eval.EntailmentEvaluator import EntailmentEvaluator
+def run_evaluation_only(args: argparse.Namespace) -> None:
+    """Esegue solo inferenza pura e calcolo metriche."""
+    pipeline = setup_pipeline(args, require_llm=True)
+
+    evaluator = EntailmentEvaluator(pipeline=pipeline)
+    evaluator.evaluate()
+
 
 def run_probing_only(args: argparse.Namespace) -> None:
     """Esegue solo la fase di probing su attivazioni già estratte."""
@@ -221,7 +229,7 @@ def run_full_pipeline(args: argparse.Namespace) -> None:
 def main() -> None:
     parser = argparse.ArgumentParser(description="Toolkit Hallucination Detection")
     parser.add_argument("--mode", type=str, required=True,
-                        choices=["test_dataset", "test_extraction", "test_extraction_for_probers",
+                        choices=["test_dataset", "evaluate", "test_extraction", "test_extraction_for_probers",
                                  "test_attribution", "full_pipeline", "analyze", "train_probers", "probing"])
     parser.add_argument("--instance_id", type=int, default=0, help="ID della frase da analizzare.")
     parser.add_argument("--model_name", type=str, default="meta-llama/Meta-Llama-3-8B-Instruct")
@@ -247,6 +255,7 @@ def main() -> None:
     # Routing dinamico
     modes: Dict[str, Callable[[argparse.Namespace], None]] = {
         "test_dataset": test_dataset,
+        "evaluate": run_evaluation_only,
         "test_extraction": functools.partial(run_extraction, method_name="save_activations_chunked",
                                              success_msg="Estrazione attivazioni (Chunked) completata!",
                                              use_chat_template=True, chunk_size=args.chunk_size),
@@ -259,7 +268,8 @@ def main() -> None:
         "probing": run_probing_only,
         "train_probers": run_train_probers,
         "analyze": run_analyze,
-        "full_pipeline": run_full_pipeline
+        "full_pipeline": run_full_pipeline,
+
     }
 
     try:
