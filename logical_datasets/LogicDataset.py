@@ -155,7 +155,7 @@ class LogicDataset(Dataset):
 
     def get_sample(self, max_samples: int = 1):
         """ Estrae un piccolo campione del dataset, utile per fare test veloci. """
-        self.dataset = self.dataset.iloc[:max_samples].reset_index(drop=True)
+        #self.all_data = self.all_data.iloc[:max_samples].reset_index(drop=True)
         return self
 
     # --- INTERFACCIA PYTORCH DATASET ---
